@@ -7,8 +7,8 @@ import {
   type CodexCliInfo,
 } from '../util/codex-cli-info.js';
 import type { ExecutionTrace } from '../core/execution-trace.js';
-import type { ModelSource } from '../core/runtime-config.js';
-import type { Adapter, DeliberationContext } from '../core/types.js';
+import type { ModelSource, ReasoningEffort } from '../core/runtime-config.js';
+import type { Adapter, AdapterCallOptions, AdapterResponse, DeliberationContext } from '../core/types.js';
 import { DeliberationError } from '../core/types.js';
 
 type SpawnedProcess = {
@@ -41,12 +41,14 @@ function defaultSpawnProcess(
 export interface CodexCliOptions {
   timeout?: number;
   model?: string;
+  reasoningEffort?: ReasoningEffort;
   codexBin?: string;
   modelSource?: ModelSource;
   trace?: ExecutionTrace;
   which?: typeof which;
   detectCliInfo?: typeof detectCodexCliInfo;
   spawnProcess?: SpawnProcess;
+  heartbeatIntervalMs?: number;
 }
 
 export class CodexCliAdapter implements Adapter {
@@ -54,12 +56,14 @@ export class CodexCliAdapter implements Adapter {
 
   private readonly timeout: number;
   private readonly model?: string;
+  private readonly reasoningEffort?: ReasoningEffort;
   private readonly codexBin: string;
   private readonly modelSource: ModelSource;
   private readonly trace?: ExecutionTrace;
   private readonly whichFn: typeof which;
   private readonly detectCliInfoFn: typeof detectCodexCliInfo;
   private readonly spawnProcess: SpawnProcess;
+  private readonly heartbeatIntervalMs: number;
 
   private activeProcess: SpawnedProcess | null = null;
   private cliInfo: CodexCliInfo | null = null;
@@ -68,12 +72,14 @@ export class CodexCliAdapter implements Adapter {
   constructor(options: CodexCliOptions = {}) {
     this.timeout = options.timeout ?? 60_000;
     this.model = options.model;
+    this.reasoningEffort = options.reasoningEffort;
     this.codexBin = options.codexBin ?? 'codex';
     this.modelSource = options.modelSource ?? 'codex-default';
     this.trace = options.trace;
     this.whichFn = options.which ?? which;
     this.detectCliInfoFn = options.detectCliInfo ?? detectCodexCliInfo;
     this.spawnProcess = options.spawnProcess ?? defaultSpawnProcess;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 15_000;
   }
 
   async initialize(): Promise<void> {
@@ -99,18 +105,25 @@ export class CodexCliAdapter implements Adapter {
     return (await this.whichFn(this.codexBin)) !== null;
   }
 
-  async sendMessage(prompt: string, context: DeliberationContext): Promise<string> {
+  async sendMessage(
+    prompt: string,
+    context: DeliberationContext,
+    options: AdapterCallOptions = {},
+  ): Promise<string | AdapterResponse> {
     const cliInfo = this.cliInfo ?? await this.detectCliInfoFn({ codexBin: this.codexBin });
     this.cliInfo = cliInfo;
 
-    const args = buildCodexExecArgs(prompt, cliInfo, this.model);
+    const args = buildCodexExecArgs(prompt, cliInfo, this.model, this.reasoningEffort);
     const round = ++this.roundCounter;
+    const timeoutMs = options.timeoutMs ?? this.timeout;
 
-    return new Promise<string>((resolve, reject) => {
+    return new Promise<string | AdapterResponse>((resolve, reject) => {
       const startedAt = Date.now();
       let stdout = '';
       let stderr = '';
       let finished = false;
+      let timedOut = false;
+      let forceKillTimer: NodeJS.Timeout | undefined;
 
       const child = this.spawnProcess(this.codexBin, args, {
         cwd: context.cwd ?? process.cwd(),
@@ -125,9 +138,20 @@ export class CodexCliAdapter implements Adapter {
         command: [this.codexBin, ...args],
         model: this.model,
         modelSource: this.modelSource,
+        reasoningEffort: this.reasoningEffort,
         codexInfo: cliInfo,
         pid: child.pid,
       });
+
+      const heartbeat = setInterval(() => {
+        this.trace?.emitVerbose(
+          `Round ${round}: waiting... ${Math.round((Date.now() - startedAt) / 1000)}s elapsed, ${
+            stdout.trim().length > 0
+              ? `${(Buffer.byteLength(stdout, 'utf-8') / 1024).toFixed(1)}KB stdout`
+              : 'no output yet'
+          } / ${(Buffer.byteLength(stderr, 'utf-8') / 1024).toFixed(1)}KB stderr`,
+        );
+      }, this.heartbeatIntervalMs);
 
       const fail = (error: DeliberationError) => {
         if (finished) {
@@ -135,29 +159,27 @@ export class CodexCliAdapter implements Adapter {
         }
         finished = true;
         this.activeProcess = null;
+        clearInterval(heartbeat);
+        clearTimeout(timer);
+        if (forceKillTimer) {
+          clearTimeout(forceKillTimer);
+        }
         reject(error);
       };
 
       const timer = setTimeout(() => {
-        child.kill('SIGTERM');
-        void this.trace?.onRoundFinish({
-          round,
-          command: [this.codexBin, ...args],
-          model: this.model,
-          modelSource: this.modelSource,
-          stdout,
-          stderr,
-          exitCode: null,
-          signal: 'SIGTERM',
-          durationMs: Date.now() - startedAt,
-        });
-        fail(
-          new DeliberationError(
-            `Codex CLI timed out after ${this.timeout}ms`,
-            'ADAPTER_TIMEOUT',
-          ),
+        if (finished || timedOut) {
+          return;
+        }
+        timedOut = true;
+        this.trace?.emitVerbose(
+          `Round ${round}: timeout reached after ${timeoutMs}ms, waiting up to 5000ms for peer shutdown`,
         );
-      }, this.timeout);
+        child.kill('SIGINT');
+        forceKillTimer = setTimeout(() => {
+          child.kill('SIGTERM');
+        }, 5_000);
+      }, timeoutMs);
 
       child.stdout.on('data', (data: Buffer | string) => {
         const chunk = data.toString();
@@ -172,12 +194,17 @@ export class CodexCliAdapter implements Adapter {
       });
 
       child.on('error', (err) => {
+        clearInterval(heartbeat);
         clearTimeout(timer);
+        if (forceKillTimer) {
+          clearTimeout(forceKillTimer);
+        }
         void this.trace?.onRoundFinish({
           round,
           command: [this.codexBin, ...args],
           model: this.model,
           modelSource: this.modelSource,
+          reasoningEffort: this.reasoningEffort,
           stdout,
           stderr,
           exitCode: null,
@@ -193,12 +220,17 @@ export class CodexCliAdapter implements Adapter {
       });
 
       child.on('close', (code, signal) => {
+        clearInterval(heartbeat);
         clearTimeout(timer);
+        if (forceKillTimer) {
+          clearTimeout(forceKillTimer);
+        }
         void this.trace?.onRoundFinish({
           round,
           command: [this.codexBin, ...args],
           model: this.model,
           modelSource: this.modelSource,
+          reasoningEffort: this.reasoningEffort,
           stdout,
           stderr,
           exitCode: code,
@@ -212,6 +244,29 @@ export class CodexCliAdapter implements Adapter {
 
         this.activeProcess = null;
         finished = true;
+
+        if (timedOut) {
+          const response = stdout.trim();
+          if (response.length > 200) {
+            // Enough content to be useful — return as partial
+            resolve({
+              content: response,
+              partial: true,
+              signal,
+              durationMs: Date.now() - startedAt,
+            });
+            return;
+          }
+
+          reject(
+            new DeliberationError(
+              `Codex CLI timed out after ${timeoutMs}ms`,
+              'ADAPTER_TIMEOUT',
+              round,
+            ),
+          );
+          return;
+        }
 
         if (code !== 0) {
           reject(
@@ -241,8 +296,13 @@ export class CodexCliAdapter implements Adapter {
 
   async cleanup(): Promise<void> {
     if (this.activeProcess) {
-      this.activeProcess.kill('SIGTERM');
+      const proc = this.activeProcess;
       this.activeProcess = null;
+      proc.kill('SIGINT');
+      const forceTimer = setTimeout(() => {
+        proc.kill('SIGTERM');
+      }, 5_000);
+      proc.on('close', () => clearTimeout(forceTimer));
     }
   }
 }

@@ -14,11 +14,22 @@ export interface RunTextOptions {
   env?: Record<string, string | undefined>;
 }
 
+export interface RunCaptureResult {
+  stdout: string;
+  stderr: string;
+}
+
 export type RunText = (
   command: string,
   args: string[],
   options?: RunTextOptions,
 ) => Promise<string>;
+
+export type RunCapture = (
+  command: string,
+  args: string[],
+  options?: RunTextOptions,
+) => Promise<RunCaptureResult>;
 
 export interface DetectCodexCliInfoInput {
   codexBin: string;
@@ -30,7 +41,9 @@ export interface ProbeCodexAuthInput {
   codexInfo: CodexCliInfo;
   cwd?: string;
   model?: string;
+  reasoningEffort?: string;
   runText?: RunText;
+  runCapture?: RunCapture;
   timeoutMs?: number;
 }
 
@@ -38,10 +51,12 @@ export interface CodexAuthStatus {
   ok: boolean;
   reason?: 'not_authenticated' | 'model_unavailable' | 'exec_failed';
   detail?: string;
+  stdout?: string;
+  stderr?: string;
 }
 
-export const defaultRunText: RunText = (command, args, options = {}) =>
-  new Promise<string>((resolve, reject) => {
+export const defaultRunCapture: RunCapture = (command, args, options = {}) =>
+  new Promise<RunCaptureResult>((resolve, reject) => {
     execFile(
       command,
       args,
@@ -63,10 +78,16 @@ export const defaultRunText: RunText = (command, args, options = {}) =>
           return;
         }
 
-        resolve((stdout ?? '').trim());
+        resolve({
+          stdout: (stdout ?? '').trim(),
+          stderr: (stderr ?? '').trim(),
+        });
       },
     );
   });
+
+export const defaultRunText: RunText = async (command, args, options = {}) =>
+  (await defaultRunCapture(command, args, options)).stdout;
 
 export function parseCodexVersion(rawVersion: string | null): string | null {
   if (!rawVersion) {
@@ -81,6 +102,7 @@ export function buildCodexExecArgs(
   prompt: string,
   info: Pick<CodexCliInfo, 'supportsExec' | 'supportsModelFlag' | 'supportsConfigFlag'>,
   model?: string,
+  reasoningEffort?: string,
 ): string[] {
   if (!info.supportsExec) {
     throw new Error('Installed Codex CLI does not support non-interactive exec mode.');
@@ -95,6 +117,9 @@ export function buildCodexExecArgs(
     } else {
       throw new Error('Installed Codex CLI cannot apply a model override for exec runs.');
     }
+  }
+  if (reasoningEffort && info.supportsConfigFlag) {
+    args.push('-c', `model_reasoning_effort="${reasoningEffort}"`);
   }
   args.push(prompt);
   return args;
@@ -127,19 +152,31 @@ export async function detectCodexCliInfo(input: DetectCodexCliInfoInput): Promis
 }
 
 export async function probeCodexAuth(input: ProbeCodexAuthInput): Promise<CodexAuthStatus> {
-  const runText = input.runText ?? defaultRunText;
+  const runCapture =
+    input.runCapture ??
+    (input.runText
+      ? async (command: string, args: string[], options?: RunTextOptions) => ({
+          stdout: await input.runText!(command, args, options),
+          stderr: '',
+        })
+      : defaultRunCapture);
 
   try {
     const args = buildCodexExecArgs(
       'Return the word ok and nothing else.',
       input.codexInfo,
       input.model,
+      input.reasoningEffort,
     );
-    await runText(input.codexBin, args, {
+    const result = await runCapture(input.codexBin, args, {
       cwd: input.cwd,
       timeoutMs: input.timeoutMs ?? 10_000,
     });
-    return { ok: true };
+    return {
+      ok: true,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     if (/codex login|authenticate|authentication|api key|not logged in|login required/i.test(detail)) {

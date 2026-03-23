@@ -62,4 +62,17 @@ describe('createExecutionTrace', () => {
     expect(messages.join('\n')).toContain('codex exec -m gpt-5.4 hello');
     expect(messages.join('\n')).toContain('model source: cli');
   });
+
+  it('emits curated lifecycle diagnostics from peer stderr in verbose mode', () => {
+    const messages: string[] = [];
+    const trace = createExecutionTrace({
+      verbose: true,
+      stderr: (line) => messages.push(line),
+    });
+
+    trace.onPeerStderr(1, 'mcp: lifi failed: MCP startup failed\nreasoning effort: xhigh\n');
+
+    expect(messages.join('\n')).toContain("peer MCP server 'lifi' failed");
+    expect(messages.join('\n')).toContain('Peer reasoning effort: xhigh');
+  });
 });

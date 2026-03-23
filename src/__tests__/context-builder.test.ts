@@ -55,7 +55,7 @@ describe('ContextBuilder', () => {
     expect(payload).toContain('My response');
   });
 
-  it('respects budget by truncating files', () => {
+  it('switches to reference-only file context when files exceed the auto budget threshold', () => {
     const builder = new ContextBuilder(500, '/tmp/test');
     const bigContent = 'x'.repeat(2000);
     const context: DeliberationContext = {
@@ -67,8 +67,9 @@ describe('ContextBuilder', () => {
     const payload = builder.buildPromptPayload('Prompt', context, [], 1);
     const payloadSize = Buffer.byteLength(payload, 'utf-8');
 
-    // Payload should be reasonably bounded (not contain the full 2000 chars)
-    expect(payload).toContain('[truncated]');
+    expect(payload).toContain('## Relevant Files (read from disk)');
+    expect(payload).toContain('- big.ts');
+    expect(payload).not.toContain(bigContent);
     expect(payloadSize).toBeLessThan(2000);
   });
 
@@ -106,5 +107,55 @@ describe('ContextBuilder', () => {
     // Should still contain at least one of the recent rounds
     const hasRecentRound = payload.includes('Round 4') || payload.includes('Round 5');
     expect(hasRecentRound).toBe(true);
+  });
+
+  it('renders file references instead of inline content when reference mode is requested', () => {
+    const builder = new ContextBuilder(50_000, '/tmp/test');
+    const context: DeliberationContext = {
+      task: 'Review the plan',
+      fileStrategy: 'reference',
+      files: [{ path: 'docs/plan.md', content: 'very large content that should not be inlined' }],
+      cwd: '/tmp/test',
+    };
+
+    const payload = builder.buildPromptPayload('Prompt', context, [], 1);
+
+    expect(payload).toContain('## Relevant Files (read from disk)');
+    expect(payload).toContain('- docs/plan.md');
+    expect(payload).not.toContain('very large content');
+  });
+
+  it('renders resume memory and file deltas as separate sections', () => {
+    const builder = new ContextBuilder(50_000, '/tmp/test');
+    const context: DeliberationContext = {
+      task: 'Continue the plan review',
+      cwd: '/tmp/test',
+      resumeMemory: {
+        summary: 'Previous review recommended stateful sessions.',
+        acceptedDecisions: ['Use bounded session memory'],
+        rejectedIdeas: ['Replay the full transcript every time'],
+        openQuestions: ['How should session expiry work?'],
+        latestRecommendation: 'Add resumable sessions.',
+        latestPeerPosition: 'Persist memory outside Codex.',
+        source: 'structured',
+      },
+      fileDeltas: [
+        {
+          path: 'docs/plans/session.md',
+          status: 'changed',
+          summary: '3 lines changed',
+          diff: '@@\n-old line\n+new line',
+          changedLineCount: 2,
+        },
+      ],
+    };
+
+    const payload = builder.buildPromptPayload('Follow up on the revised plan', context, [], 1);
+
+    expect(payload).toContain('## Session Memory');
+    expect(payload).toContain('Use bounded session memory');
+    expect(payload).toContain('## Changes Since Last Review');
+    expect(payload).toContain('docs/plans/session.md');
+    expect(payload).toContain('+new line');
   });
 });

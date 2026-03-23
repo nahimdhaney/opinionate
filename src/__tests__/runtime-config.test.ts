@@ -84,4 +84,23 @@ describe('resolveRuntimeConfig', () => {
 
     expect(resolved.model).toBe('new-model');
   });
+
+  it('supports reasoning effort, file strategy, and retry flags', () => {
+    const resolved = resolveRuntimeConfig({
+      argv: {
+        'reasoning-effort': 'medium',
+        'file-strategy': 'reference',
+        'retry-on-timeout': true,
+        'persist-session': true,
+      },
+      env: {
+        OPINIONATE_REASONING_EFFORT: 'high',
+      },
+    });
+
+    expect(resolved.reasoningEffort).toBe('medium');
+    expect(resolved.fileStrategy).toBe('reference');
+    expect(resolved.retryOnTimeout).toBe(true);
+    expect(resolved.persistSession).toBe(true);
+  });
 });

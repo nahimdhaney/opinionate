@@ -1,18 +1,57 @@
 #!/usr/bin/env node
 
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Deliberation } from './core/deliberation.js';
+import { ContextBuilder } from './core/context-builder.js';
 import { createExecutionTrace } from './core/execution-trace.js';
 import { formatDoctorResult, runDoctor as defaultRunDoctor } from './core/preflight.js';
 import { resolveRuntimeConfig } from './core/runtime-config.js';
+import {
+  appendSessionRun,
+  createSession,
+  loadSession,
+  pruneExpiredSessions,
+  updateSessionFiles,
+  updateSessionMemory,
+  type DeliberationSession,
+  type SessionTrackedFile,
+} from './core/session-store.js';
+import { checkLine, failLine, renderBox, detectColorSupport, createColors } from './util/format.js';
+import { TerminalReporter } from './util/terminal-reporter.js';
+import { buildFileDelta, captureFileSnapshot } from './util/file-snapshot.js';
+import { getSessionSnapshotsDir } from './util/session-paths.js';
 import type { ExecutionTrace } from './core/execution-trace.js';
-import type { ModelSource, RuntimeConfig } from './core/runtime-config.js';
-import type { DeliberationContext, DeliberationMode, FileContext, Adapter } from './core/types.js';
-import { DEFAULT_CONFIG } from './core/types.js';
+import type { ModelSource, ReasoningEffort, RuntimeConfig } from './core/runtime-config.js';
+import type {
+  DeliberationContext,
+  DeliberationMode,
+  DeliberationResult,
+  FileContext,
+  Adapter,
+  FileDelta,
+} from './core/types.js';
+import type { InstallSkillResult } from './install.js';
+import { DEFAULT_CONFIG, DeliberationError } from './core/types.js';
 import { CodexCliAdapter } from './adapters/codex-cli.js';
+
+function getErrorRemedy(error: unknown): string | undefined {
+  if (!(error instanceof DeliberationError)) return undefined;
+  switch (error.code) {
+    case 'ADAPTER_UNAVAILABLE':
+      return 'Codex CLI not found. Run: npm install -g @openai/codex';
+    case 'ADAPTER_TIMEOUT':
+      return 'Peer timed out. Try: --reasoning-effort medium --retry-on-timeout';
+    case 'ADAPTER_ERROR':
+      if (error.message.toLowerCase().includes('auth'))
+        return 'Codex auth failed. Run: codex login';
+      return 'Peer error. Run with --verbose --show-peer-output for details';
+    default:
+      return undefined;
+  }
+}
 
 type CliArgs = Record<string, string | boolean | undefined>;
 
@@ -21,9 +60,16 @@ interface CliIO {
   stderr: (chunk: string) => void;
 }
 
+interface FileLoadDependencies {
+  exists: (path: string) => boolean;
+  sizeBytes: (path: string) => number;
+  readText: (path: string) => string;
+}
+
 export interface AdapterFactoryOptions {
   timeout: number;
   model?: string;
+  reasoningEffort?: ReasoningEffort;
   modelSource: ModelSource;
   codexBin: string;
   trace: ExecutionTrace;
@@ -35,7 +81,7 @@ export interface RunCliDependencies {
   cwd?: () => string;
   runDoctor?: typeof defaultRunDoctor;
   resolveAdapter?: (name: string, options: AdapterFactoryOptions) => Adapter;
-  installSkill?: (targetDir?: string) => Promise<void>;
+  installSkill?: (targetDir?: string) => Promise<InstallSkillResult>;
 }
 
 function createDefaultIO(): CliIO {
@@ -79,11 +125,13 @@ function parseArgs(argv: string[]): CliArgs {
 
 function printUsage(io: CliIO): void {
   log(io, 'Usage: opinionate run --mode <mode> --task <task> [options]');
+  log(io, '       opinionate continue --session <id> [options]');
   log(io, '       opinionate doctor [options]');
   log(io, '       opinionate install');
   log(io, '');
   log(io, 'Commands:');
   log(io, '  run      Run a deliberation session');
+  log(io, '  continue Resume a persisted deliberation session');
   log(io, '  doctor   Check Codex, model, skill, and binary readiness');
   log(io, '  install  Install the Claude Code skill into .claude/skills');
   log(io, '');
@@ -92,13 +140,17 @@ function printUsage(io: CliIO): void {
   log(io, '  --timeout <ms>                      Per-round timeout in ms (default: 60000)');
   log(io, '  --context-budget <bytes>            Max context size (default: 50000)');
   log(io, '  --model <name>                      Model override for Codex peer');
+  log(io, '  --reasoning-effort <level>          Override peer reasoning effort');
   log(io, '  --codex-bin <path>                  Codex binary path (default: codex)');
+  log(io, '  --file-strategy <auto|inline|reference>  Control whether file contents or paths are sent');
+  log(io, '  --retry-on-timeout                  Retry timed-out rounds with reduced file context');
   log(io, '  --verbose                           Print peer execution details to stderr');
   log(io, '  --trace-dir <path>                  Persist per-round JSON trace artifacts');
   log(io, '  --show-peer-command                 Print the exact Codex command line');
   log(io, '  --show-peer-output                  Stream peer stdout/stderr to stderr');
+  log(io, '  --persist-session                   Persist this run so it can be resumed later');
   log(io, '');
-  log(io, 'Options for run:');
+  log(io, 'Options for run/continue:');
   log(io, '  --mode <plan|review|debug|decide>   Deliberation mode (required)');
   log(io, '  --task <description>                Task to deliberate on (required)');
   log(io, '  --files <path1,path2,...>           Comma-separated file paths');
@@ -107,27 +159,86 @@ function printUsage(io: CliIO): void {
   log(io, '  --max-rounds <n>                    Max deliberation rounds (default: 5)');
   log(io, '  --peer-adapter <name>               Peer adapter (default: codex-cli)');
   log(io, '  --orchestrator-adapter <name>       Orchestrator adapter');
+  log(io, '  --session <id>                      Session id for `continue`');
 }
 
-function loadFiles(filePaths: string, cwd: string, io: CliIO): FileContext[] {
+function isDocLikePath(path: string): boolean {
+  return /\.(md|mdx|txt|rst)$/i.test(path) || /(^|\/)(docs|plans|specs)\//.test(path);
+}
+
+function shouldLoadFilesByReference(
+  files: Array<{ path: string; sizeBytes?: number }>,
+  fileStrategy: DeliberationContext['fileStrategy'],
+  contextBudget: number,
+): boolean {
+  if (fileStrategy === 'reference') {
+    return true;
+  }
+
+  if (fileStrategy !== 'auto') {
+    return false;
+  }
+
+  const totalSize = files.reduce((sum, file) => sum + (file.sizeBytes ?? 0), 0);
+  return files.some((file) => isDocLikePath(file.path)) || totalSize > contextBudget * 0.6;
+}
+
+const defaultFileLoadDependencies: FileLoadDependencies = {
+  exists: existsSync,
+  sizeBytes: (path) => statSync(path).size,
+  readText: (path) => readFileSync(path, 'utf8'),
+};
+
+export function loadFilesForContext(
+  filePaths: string,
+  cwd: string,
+  io: CliIO,
+  options: {
+    fileStrategy: DeliberationContext['fileStrategy'];
+    contextBudget: number;
+  },
+  dependencies: FileLoadDependencies = defaultFileLoadDependencies,
+): FileContext[] {
   const paths = filePaths.split(',').map((path) => path.trim()).filter(Boolean);
-  const files: FileContext[] = [];
+  const files: Array<FileContext & { fullPath: string }> = [];
 
   for (const path of paths) {
     const fullPath = resolve(cwd, path);
-    if (!existsSync(fullPath)) {
+    if (!dependencies.exists(fullPath)) {
       log(io, `Warning: File not found: ${path}`);
       continue;
     }
 
     try {
-      files.push({ path, content: readFileSync(fullPath, 'utf8') });
+      files.push({
+        path,
+        fullPath,
+        sizeBytes: dependencies.sizeBytes(fullPath),
+      });
     } catch {
-      log(io, `Warning: Could not read file ${path}`);
+      log(io, `Warning: Could not inspect file ${path}`);
     }
   }
 
-  return files;
+  if (shouldLoadFilesByReference(files, options.fileStrategy, options.contextBudget)) {
+    return files.map(({ fullPath: _fullPath, ...file }) => file);
+  }
+
+  const loaded: FileContext[] = [];
+  for (const file of files) {
+    try {
+      const content = dependencies.readText(file.fullPath);
+      loaded.push({
+        path: file.path,
+        content,
+        sizeBytes: file.sizeBytes ?? Buffer.byteLength(content, 'utf8'),
+      });
+    } catch {
+      log(io, `Warning: Could not read file ${file.path}`);
+    }
+  }
+
+  return loaded;
 }
 
 function getGitLog(cwd: string): string | undefined {
@@ -142,12 +253,25 @@ function getGitLog(cwd: string): string | undefined {
   }
 }
 
-function buildContext(args: CliArgs, cwd: string, io: CliIO): DeliberationContext {
-  const task = args.task as string;
-  const context: DeliberationContext = { task, cwd };
+function buildContext(
+  args: CliArgs,
+  runtimeConfig: RuntimeConfig,
+  cwd: string,
+  io: CliIO,
+  task: string,
+): DeliberationContext {
+  const context: DeliberationContext = {
+    task,
+    cwd,
+    fileStrategy: runtimeConfig.fileStrategy,
+    persistSession: runtimeConfig.persistSession,
+  };
 
   if (typeof args.files === 'string') {
-    context.files = loadFiles(args.files, cwd, io);
+    context.files = loadFilesForContext(args.files, cwd, io, {
+      fileStrategy: runtimeConfig.fileStrategy,
+      contextBudget: runtimeConfig.contextBudget,
+    });
   }
 
   if (args['git-log']) {
@@ -159,6 +283,148 @@ function buildContext(args: CliArgs, cwd: string, io: CliIO): DeliberationContex
   }
 
   return context;
+}
+
+function filterSafeFiles(cwd: string, files: FileContext[] | undefined, budget: number): FileContext[] {
+  if (!files || files.length === 0) {
+    return [];
+  }
+  return new ContextBuilder(budget, cwd).filterFiles(files);
+}
+
+function readSnapshotText(cwd: string, sessionId: string, snapshotFile: string): string {
+  return readFileSync(join(getSessionSnapshotsDir(cwd, sessionId), snapshotFile), 'utf8');
+}
+
+function readContextFileContent(cwd: string, file: FileContext): string | undefined {
+  if (typeof file.content === 'string') {
+    return file.content;
+  }
+
+  try {
+    return readFileSync(resolve(cwd, file.path), 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+function buildSessionFileDeltas(
+  cwd: string,
+  session: DeliberationSession,
+  files: FileContext[],
+): FileDelta[] {
+  const previousByPath = new Map(session.files.map((file) => [file.path, file]));
+  const deltas: FileDelta[] = [];
+  let totalBytes = 0;
+
+  for (const file of files) {
+    const previous = previousByPath.get(file.path);
+    if (!previous?.snapshotFile) {
+      deltas.push({
+        path: file.path,
+        status: 'added',
+        summary: 'file newly added to session; read from disk',
+        changedLineCount: readContextFileContent(cwd, file)?.split(/\r?\n/).length ?? 0,
+      });
+      continue;
+    }
+
+    const currentContent = readContextFileContent(cwd, file);
+    if (typeof currentContent !== 'string') {
+      deltas.push({
+        path: file.path,
+        status: 'changed',
+        summary: 'file changed (unable to load current content; read from disk)',
+        changedLineCount: 0,
+      });
+      continue;
+    }
+
+    const delta = buildFileDelta({
+      path: file.path,
+      previousContent: readSnapshotText(cwd, session.id, previous.snapshotFile),
+      currentContent,
+      maxBytes: 8 * 1024,
+    });
+
+    if (!delta) {
+      continue;
+    }
+
+    const estimatedSize = Buffer.byteLength(delta.diff ?? delta.summary, 'utf8');
+    if (totalBytes + estimatedSize > 24 * 1024) {
+      deltas.push({
+        path: file.path,
+        status: 'changed',
+        summary: 'file changed (delta omitted to stay within budget; read from disk)',
+        changedLineCount: delta.changedLineCount,
+      });
+      continue;
+    }
+
+    deltas.push(delta);
+    totalBytes += estimatedSize;
+  }
+
+  return deltas;
+}
+
+async function persistSessionArtifacts(
+  cwd: string,
+  sessionId: string,
+  mode: DeliberationMode,
+  context: DeliberationContext,
+  result: DeliberationResult,
+): Promise<void> {
+  if (!result.sessionMemory) {
+    return;
+  }
+
+  const safeFiles = filterSafeFiles(cwd, context.files, DEFAULT_CONFIG.contextBudget);
+  const snapshotsDir = getSessionSnapshotsDir(cwd, sessionId);
+  const trackedFiles: SessionTrackedFile[] = [];
+
+  for (const file of safeFiles) {
+    if ((file.sizeBytes ?? 0) > 200 * 1024) {
+      continue;
+    }
+
+    const content = readContextFileContent(cwd, file);
+    if (typeof content !== 'string') {
+      continue;
+    }
+
+    if (Buffer.byteLength(content, 'utf8') > 200 * 1024) {
+      continue;
+    }
+
+    const snapshot = await captureFileSnapshot(snapshotsDir, {
+      path: file.path,
+      content,
+    });
+
+    trackedFiles.push({
+      path: file.path,
+      sha256: snapshot.sha256,
+      sizeBytes: snapshot.sizeBytes,
+      lastIncludedAt: Date.now(),
+      snapshotFile: snapshot.snapshotFile,
+    });
+  }
+
+  await updateSessionMemory(cwd, sessionId, result.sessionMemory);
+  await updateSessionFiles(cwd, sessionId, trackedFiles);
+  await appendSessionRun(cwd, sessionId, {
+    id: `run-${Date.now()}`,
+    startedAt: Date.now(),
+    completedAt: Date.now(),
+    mode,
+    task: context.task,
+    rounds: result.rounds,
+    agreed: result.agreed,
+    partialRounds: result.partialRounds,
+    summary: result.summary,
+  });
 }
 
 function createTrace(runtimeConfig: RuntimeConfig, cwd: string, io: CliIO): ExecutionTrace {
@@ -178,6 +444,7 @@ function defaultResolveAdapter(name: string, options: AdapterFactoryOptions): Ad
       return new CodexCliAdapter({
         timeout: options.timeout,
         model: options.model,
+        reasoningEffort: options.reasoningEffort,
         codexBin: options.codexBin,
         modelSource: options.modelSource,
         trace: options.trace,
@@ -188,30 +455,94 @@ function defaultResolveAdapter(name: string, options: AdapterFactoryOptions): Ad
 }
 
 async function runDoctorCommand(
-  args: CliArgs,
+  _args: CliArgs,
   runtimeConfig: RuntimeConfig,
   cwd: string,
   io: CliIO,
   dependencies: RunCliDependencies,
 ): Promise<number> {
   const doctor = dependencies.runDoctor ?? defaultRunDoctor;
-  const result = await doctor({
-    cwd,
-    runtimeConfig,
-  });
-  log(io, formatDoctorResult(result));
-  return result.ok ? 0 : 1;
+  try {
+    const result = await doctor({
+      cwd,
+      runtimeConfig,
+    });
+    log(io, formatDoctorResult(result));
+    return result.ok ? 0 : 1;
+  } catch (error) {
+    log(io, failLine('Environment check failed', error instanceof Error ? error.message : String(error)));
+    return 1;
+  }
 }
 
-async function runInstallCommand(cwd: string, dependencies: RunCliDependencies): Promise<number> {
-  if (dependencies.installSkill) {
-    await dependencies.installSkill(cwd);
+async function runInstallCommand(
+  _args: CliArgs,
+  runtimeConfig: RuntimeConfig,
+  cwd: string,
+  io: CliIO,
+  dependencies: RunCliDependencies,
+): Promise<number> {
+  const install =
+    dependencies.installSkill ??
+    (await import('./install.js')).installSkill;
+  const doctor = dependencies.runDoctor ?? defaultRunDoctor;
+
+  const c = createColors(detectColorSupport());
+  log(io, renderBox('opinionate v0.1.0'));
+  log(io, '');
+  log(io, c.cyan('Installing skill...'));
+  log(io, '');
+
+  let installResult: InstallSkillResult;
+  try {
+    installResult = await install(cwd);
+  } catch (error) {
+    installResult = {
+      ok: false,
+      skillFile: resolve(cwd, '.claude', 'skills', 'opinionate', 'SKILL.md'),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  if (installResult.ok) {
+    log(io, checkLine(`Skill installed to ${installResult.skillFile}`));
+  } else {
+    log(io, failLine('Skill installation failed', installResult.error));
+  }
+
+  log(io, '');
+  log(io, 'Checking environment...');
+  log(io, '');
+
+  let doctorResult;
+  try {
+    doctorResult = await doctor({
+      cwd,
+      runtimeConfig,
+      skillInstalled: installResult.ok,
+    });
+  } catch (error) {
+    log(io, failLine('Environment check failed', error instanceof Error ? error.message : String(error)));
+    return 1;
+  }
+
+  log(io, formatDoctorResult(doctorResult));
+
+  if (installResult.ok && doctorResult.ok) {
+    log(io, '');
+    log(io, c.bold('Next:'));
+    log(io, '  1. Restart your Claude Code session in this project');
+    log(io, '  2. Type /opinionate to invoke manually, or Claude will auto-trigger it');
+    log(io, '');
+    log(io, c.bold('Try it now:'));
+    log(io, c.dim('  opinionate run --mode plan --task "hello world" --verbose'));
+    log(io, '');
+    log(io, c.bold('Update later:'));
+    log(io, c.dim('  npm install -g opinionate@latest && opinionate install'));
     return 0;
   }
 
-  const { installSkill } = await import('./install.js');
-  await installSkill(cwd);
-  return 0;
+  return 1;
 }
 
 async function runDeliberationCommand(
@@ -220,9 +551,29 @@ async function runDeliberationCommand(
   cwd: string,
   io: CliIO,
   dependencies: RunCliDependencies,
+  command: 'run' | 'continue',
 ): Promise<number> {
-  const mode = args.mode as DeliberationMode | undefined;
-  const task = args.task as string | undefined;
+  await pruneExpiredSessions(cwd).catch(() => undefined);
+
+  const sessionIdArg = typeof args.session === 'string' ? args.session : undefined;
+  let existingSession: DeliberationSession | undefined;
+
+  if (command === 'continue') {
+    if (!sessionIdArg) {
+      log(io, 'Error: --session is required for `opinionate continue`');
+      return 1;
+    }
+
+    try {
+      existingSession = await loadSession(cwd, sessionIdArg);
+    } catch (error) {
+      log(io, `Error: ${error instanceof Error ? error.message : String(error)}`);
+      return 1;
+    }
+  }
+
+  const mode = (args.mode as DeliberationMode | undefined) ?? existingSession?.mode;
+  const task = (args.task as string | undefined) ?? existingSession?.task;
 
   if (!mode || !['plan', 'review', 'debug', 'decide'].includes(mode)) {
     log(io, 'Error: --mode is required and must be one of: plan, review, debug, decide');
@@ -237,12 +588,38 @@ async function runDeliberationCommand(
   const maxRounds = typeof args['max-rounds'] === 'string'
     ? Number.parseInt(args['max-rounds'], 10)
     : DEFAULT_CONFIG.maxRounds;
-  const context = buildContext(args, cwd, io);
+  let context = buildContext(args, runtimeConfig, cwd, io, task);
   const trace = createTrace(runtimeConfig, cwd, io);
+
+  let sessionId: string | undefined;
+  if (command === 'run' && runtimeConfig.persistSession) {
+    const created = await createSession({
+      cwd,
+      mode,
+      task,
+    });
+    sessionId = created.id;
+    context = {
+      ...context,
+      persistSession: true,
+      sessionId,
+    };
+  } else if (existingSession) {
+    sessionId = existingSession.id;
+    const safeFiles = filterSafeFiles(cwd, context.files, runtimeConfig.contextBudget);
+    context = {
+      ...context,
+      persistSession: true,
+      sessionId,
+      resumeMemory: existingSession.memory,
+      fileDeltas: buildSessionFileDeltas(cwd, existingSession, safeFiles),
+    };
+  }
 
   const adapterOptions: AdapterFactoryOptions = {
     timeout: runtimeConfig.timeout,
     model: runtimeConfig.model,
+    reasoningEffort: runtimeConfig.reasoningEffort,
     modelSource: runtimeConfig.modelSource,
     codexBin: runtimeConfig.codexBin,
     trace,
@@ -264,11 +641,20 @@ async function runDeliberationCommand(
     return 1;
   }
 
-  log(io, `Starting deliberation: mode=${mode}, maxRounds=${maxRounds}, peer=${peerAdapterName}`);
-  if (orchestratorAdapterName) {
-    log(io, `Orchestrator adapter: ${orchestratorAdapterName}`);
+  const reporter = new TerminalReporter({
+    stderr: (chunk) => io.stderr(chunk),
+    verbose: runtimeConfig.verbose,
+    mode,
+    maxRounds,
+    colorSupport: detectColorSupport(),
+  });
+
+  reporter.emitHeader(peerAdapterName, runtimeConfig.model);
+  if (existingSession) {
+    reporter.emitSessionResumed(existingSession.id);
   }
 
+  let currentRound = 0;
   const deliberation = new Deliberation({
     maxRounds,
     timeout: runtimeConfig.timeout,
@@ -277,17 +663,43 @@ async function runDeliberationCommand(
     peerAdapter,
     orchestratorAdapter,
     context,
-    onRoundComplete: (round) => {
-      log(io, `Deliberating... Round ${round}/${maxRounds} complete.`);
+    retryOnTimeout: runtimeConfig.retryOnTimeout,
+    onVerbose: (message) => {
+      trace.emitVerbose(message);
+      reporter.emitDiagnostic(currentRound || 1, message);
+    },
+    onRoundStart: (round) => {
+      currentRound = round;
+      reporter.emitRoundStart(round);
+    },
+    onRoundComplete: (round, _transcript, roundResult) => {
+      reporter.emitRoundComplete(
+        round,
+        roundResult?.durationMs ?? 0,
+        roundResult?.agreed ?? false,
+      );
     },
   });
 
   try {
     const result = await deliberation.run();
+    reporter.emitResult(result.agreed, result.rounds, reporter.getElapsedMs());
+    if (sessionId) {
+      result.sessionId = sessionId;
+      if (command === 'continue') {
+        result.continuedFromSession = true;
+      }
+      if (command === 'run' && runtimeConfig.persistSession) {
+        result.persistedSession = true;
+      }
+      await persistSessionArtifacts(cwd, sessionId, mode, context, result);
+      reporter.emitSessionPersisted(sessionId);
+    }
     io.stdout(`${JSON.stringify(result, null, 2)}\n`);
     return 0;
   } catch (error) {
-    log(io, `Error: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    reporter.emitError(message, getErrorRemedy(error));
     return 1;
   }
 }
@@ -313,9 +725,11 @@ export async function runCli(
     case 'doctor':
       return runDoctorCommand(args, runtimeConfig, cwd, io, dependencies);
     case 'install':
-      return runInstallCommand(cwd, dependencies);
+      return runInstallCommand(args, runtimeConfig, cwd, io, dependencies);
     case 'run':
-      return runDeliberationCommand(args, runtimeConfig, cwd, io, dependencies);
+      return runDeliberationCommand(args, runtimeConfig, cwd, io, dependencies, 'run');
+    case 'continue':
+      return runDeliberationCommand(args, runtimeConfig, cwd, io, dependencies, 'continue');
     default:
       printUsage(io);
       return 1;
@@ -327,7 +741,16 @@ async function main(): Promise<void> {
   process.exit(exitCode);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+const isDirectRun = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(resolve(process.argv[1]));
+  } catch {
+    return false;
+  }
+})();
+
+if (isDirectRun) {
   main().catch((error) => {
     process.stderr.write(`Fatal: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);

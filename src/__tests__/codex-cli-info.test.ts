@@ -1,8 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { detectCodexCliInfo, probeCodexAuth } from '../util/codex-cli-info.js';
+import { buildCodexExecArgs, detectCodexCliInfo, probeCodexAuth } from '../util/codex-cli-info.js';
 
 function fakeRunText(map: Record<string, string>, failures: Record<string, string> = {}) {
   return async (command: string, args: string[]): Promise<string> => {
+    const key = `${command} ${args.join(' ')}`;
+    if (failures[key]) {
+      throw new Error(failures[key]);
+    }
+    if (!(key in map)) {
+      throw new Error(`Unexpected command: ${key}`);
+    }
+    return map[key]!;
+  };
+}
+
+function fakeRunCapture(
+  map: Record<string, { stdout: string; stderr: string }>,
+  failures: Record<string, string> = {},
+) {
+  return async (command: string, args: string[]) => {
     const key = `${command} ${args.join(' ')}`;
     if (failures[key]) {
       throw new Error(failures[key]);
@@ -45,6 +61,21 @@ describe('detectCodexCliInfo', () => {
 });
 
 describe('probeCodexAuth', () => {
+  it('adds reasoning effort overrides to exec args when requested', () => {
+    expect(
+      buildCodexExecArgs(
+        'hello',
+        {
+          supportsExec: true,
+          supportsModelFlag: true,
+          supportsConfigFlag: true,
+        },
+        'gpt-5.4',
+        'medium',
+      ),
+    ).toEqual(['exec', '-m', 'gpt-5.4', '-c', 'model_reasoning_effort="medium"', 'hello']);
+  });
+
   it('reports login-required errors as not authenticated', async () => {
     const auth = await probeCodexAuth({
       codexBin: 'codex',
@@ -85,5 +116,28 @@ describe('probeCodexAuth', () => {
 
     expect(auth.ok).toBe(false);
     expect(auth.reason).toBe('model_unavailable');
+  });
+
+  it('captures stderr diagnostics from successful auth probes', async () => {
+    const auth = await probeCodexAuth({
+      codexBin: 'codex',
+      cwd: '/tmp/project',
+      codexInfo: {
+        version: '0.116.0',
+        rawVersion: 'codex-cli 0.116.0',
+        supportsExec: true,
+        supportsModelFlag: true,
+        supportsConfigFlag: true,
+      },
+      runCapture: fakeRunCapture({
+        'codex exec Return the word ok and nothing else.': {
+          stdout: 'ok',
+          stderr: 'mcp: lifi failed: MCP startup failed',
+        },
+      }),
+    });
+
+    expect(auth.ok).toBe(true);
+    expect(auth.stderr).toContain('lifi failed');
   });
 });

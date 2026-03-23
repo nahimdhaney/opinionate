@@ -66,6 +66,11 @@ export class AgreementDetector {
     // Score agreement/disagreement signals
     let roundScore = 0;
 
+    const verdictMatch = latestPeer.content.match(/\*\*verdict:\*\*\s*(agree|disagree)\b/i);
+    if (verdictMatch) {
+      roundScore += verdictMatch[1]!.toLowerCase() === 'agree' ? 2 : -2;
+    }
+
     for (const signal of AGREEMENT_SIGNALS) {
       if (content.includes(signal)) {
         roundScore += 1;

@@ -106,4 +106,33 @@ describe('AgreementDetector', () => {
     expect(result.synthesized.summary).toContain('1 round');
     expect(result.synthesized.summary).toContain('no clear agreement');
   });
+
+  it('treats a structured AGREE verdict as a strong agreement signal', () => {
+    const transcript: DeliberationMessage[] = [
+      makeMessage('orchestrator', 'What should we do?', 1),
+      makeMessage(
+        'peer',
+        '**Verdict:** AGREE\n**Decision:** Keep the current design.\n**Details:** I agree this is the right approach.',
+        1,
+      ),
+    ];
+
+    const result = detector.evaluate(transcript, 1);
+    expect(result.agreed).toBe(true);
+  });
+
+  it('lets a structured DISAGREE verdict override mixed agreement language', () => {
+    const transcript: DeliberationMessage[] = [
+      makeMessage('orchestrator', 'Should we keep this design?', 1),
+      makeMessage(
+        'peer',
+        '**Verdict:** DISAGREE\n**Decision:** Change the design.\n**Details:** I agree the problem is real, but I disagree with the proposed fix and would take an alternative approach.',
+        1,
+      ),
+    ];
+
+    const result = detector.evaluate(transcript, 1);
+    expect(result.agreed).toBe(false);
+    expect(result.synthesized.keyDisagreements!.length).toBeGreaterThan(0);
+  });
 });

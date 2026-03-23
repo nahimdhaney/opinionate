@@ -1,367 +1,252 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="opinionate" width="800" />
+  <img src="https://raw.githubusercontent.com/nahimdhaney/opinionate/main/assets/banner.svg" alt="opinionate" width="800" />
 </p>
 
 # opinionate
 
-Structured peer deliberation for AI coding tools. Get a second opinion from Codex before committing to a plan, review, or architectural decision.
+**Get a second opinion before you commit.** Opinionate runs structured multi-round deliberations between your AI coding agent and a peer, so you make better decisions on plans, reviews, and architecture.
 
-`opinionate` runs a structured deliberation between your primary coding agent (Claude) and a peer agent (Codex CLI), producing a recommendation with full transparency into the reasoning process.
+> v0.1.0 — CLI flags are additive, JSON output is stable within 0.1.x.
 
-## Quick Start
+## What Is This?
 
-```bash
-# Install the package and Codex CLI
-npm install opinionate
-npm install -g @openai/codex
+Opinionate is a CLI tool and Claude Code skill that orchestrates a structured debate between two AI agents — your primary agent (Claude) and a peer (Codex CLI). Instead of trusting one model's first instinct, you get a deliberated recommendation with full transparency into the reasoning.
 
-# Install the Claude Code skill into your project.
-# This writes .claude/skills/opinionate/SKILL.md
-npx opinionate install
-
-# Verify the environment before your first run
-npx opinionate doctor
-
-# Run a deliberation manually with visibility enabled
-npx opinionate run \
-  --mode plan \
-  --task "Design the authentication system for our API" \
-  --cwd . \
-  --files "src/auth.ts,src/middleware.ts" \
-  --git-log \
-  --verbose \
-  --show-peer-command
-```
+**Who is it for:**
+- Claude Code users who want a second opinion on complex decisions
+- Developers who use Codex CLI and want structured peer review
+- Anyone building multi-agent workflows
 
 ## Prerequisites
 
-- Node.js >= 18
-- [Codex CLI](https://github.com/openai/codex) installed globally (`npm install -g @openai/codex`)
-- Codex authenticated for non-interactive use (`codex login`) or otherwise configured to run `codex exec`
+- **Node.js** >= 18
+- **[Codex CLI](https://github.com/openai/codex)** installed globally: `npm install -g @openai/codex`
+- **Codex authenticated**: `codex login`
+
+## Install
+
+```bash
+# Global install (recommended)
+npm install -g opinionate
+
+# Or zero-install trial
+npx opinionate@latest install
+```
+
+Then set up your project:
+
+```bash
+cd /path/to/your-project
+opinionate install
+```
+
+This installs the Claude Code skill and runs environment checks. Restart your Claude Code session afterward.
+
+## Quick Start
+
+### With Claude Code
+
+After installing, restart Claude Code in your project. Claude will invoke opinionate automatically when facing complex decisions, or you can trigger it:
+
+```
+/opinionate
+```
+
+### As a CLI
+
+```bash
+opinionate run \
+  --mode plan \
+  --task "Design the authentication system for our API" \
+  --files "src/auth.ts,src/middleware.ts" \
+  --reasoning-effort medium \
+  --verbose \
+  --retry-on-timeout
+```
+
+**stdout** is always machine-readable JSON. **stderr** shows styled progress:
+
+```
+╭─ opinionate · plan · 5 rounds max · peer: codex-cli ─╮
+
+◐ Round 1/5: sending context to peer...
+◑ Round 1/5: waiting... 30s elapsed, no output yet
+✓ Round 1/5: complete (42s, agreed)
+
+✓ Deliberation complete: agreed in 1 round (42s)
+```
 
 ## How It Works
 
 ```
 ┌──────────┐                              ┌──────────┐
 │          │  1. task + context            │          │
-│  Claude  │ ───────────────────────────►  │ opinion- │
-│  (host)  │                               │ ate      │
-│          │  4. DeliberationResult (JSON)  │          │
-│          │ ◄───────────────────────────   │          │
-└──────────┘                               └─────┬────┘
-                                                  │
-                              2. orchestrator      │     3. peer
-                                 prompt            │     response
-                                                  ▼
-                                           ┌──────────┐
-                                           │  Codex   │
-                                           │  CLI     │
-                                           └──────────┘
+│  Claude  │ ──────────────────────────►   │ opinion- │
+│  (host)  │                              │ ate      │
+│          │  4. DeliberationResult (JSON) │          │
+│          │ ◄──────────────────────────   │          │
+└──────────┘                              └─────┬────┘
+                                                │
+                             2. orchestrator     │     3. peer
+                                prompt           │     response
+                                                ▼
+                                          ┌──────────┐
+                                          │  Codex   │
+                                          │  CLI     │
+                                          └──────────┘
 ```
 
 1. Claude invokes `opinionate run` via the installed skill
-2. The engine sends structured prompts to the peer agent (Codex)
+2. The engine sends structured prompts to Codex
 3. Codex responds with its analysis
 4. The engine evaluates agreement, iterates if needed, and returns a result
 5. Claude presents the outcome for your approval
 
-## Usage
-
-### With Claude Code (Recommended)
-
-After running `npx opinionate install`, the skill is available automatically. Claude will invoke it when facing complex decisions, or you can trigger it manually:
+## CLI Reference
 
 ```
-/opinionate
+opinionate run [options]         Start a new deliberation
+opinionate continue [options]    Resume a persisted session
+opinionate doctor [options]      Check environment readiness
+opinionate install               Install skill + run doctor
 ```
 
-### CLI Reference
+### Modes
 
-```
-opinionate run [options]
-opinionate doctor [options]
-opinionate install
-```
+| Mode | Use When |
+|------|----------|
+| **plan** | Before implementation — explore approaches and trade-offs |
+| **review** | After writing code — get a second opinion on correctness |
+| **debug** | When stuck — brainstorm hypotheses and debugging strategies |
+| **decide** | Facing a choice — weigh options for libraries, patterns, APIs |
 
-#### `run` Options
+### Key Flags
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--mode` | Deliberation mode: `plan`, `review`, `debug`, `decide` | *required* |
-| `--task` | What to deliberate on (1-2 sentences) | *required* |
+| `--mode` | `plan`, `review`, `debug`, `decide` | *required* |
+| `--task` | What to deliberate on | *required* |
+| `--files` | Comma-separated file paths for context | — |
+| `--reasoning-effort` | `low`, `medium`, `high`, `xhigh` | Codex config |
+| `--file-strategy` | `auto`, `inline`, `reference` | `auto` |
+| `--retry-on-timeout` | Retry timed-out rounds with reduced context | `false` |
+| `--persist-session` | Save session for later `continue` | `false` |
+| `--session` | Session id for `continue` | — |
+| `--verbose` | Show round lifecycle on stderr | `false` |
+| `--timeout` | Per-round timeout in ms | `60000` |
+| `--max-rounds` | Max deliberation rounds | `5` |
+| `--model` | Override Codex model | Codex default |
+| `--git-log` | Include recent commits as context | `false` |
+| `--trace-dir` | Write per-round JSON artifacts | — |
+| `--show-peer-command` | Print exact Codex command | `false` |
+| `--show-peer-output` | Stream raw Codex output | `false` |
 | `--cwd` | Working directory | `.` |
-| `--files` | Comma-separated file paths to include as context | — |
-| `--git-log` | Include last 20 commits as context | `false` |
-| `--conversation-summary` | Summary of current conversation | — |
-| `--max-rounds` | Maximum deliberation rounds | `5` |
-| `--timeout` | Per-round timeout in milliseconds | `60000` |
-| `--context-budget` | Max context payload size in bytes | `50000` |
-| `--peer-adapter` | Peer adapter name | `codex-cli` |
-| `--orchestrator-adapter` | Orchestrator adapter name (omit for templates) | — |
-| `--model` | Explicit Codex model override | Codex default |
-| `--codex-bin` | Codex binary path | `codex` |
-| `--verbose` | Print execution lifecycle details to stderr | `false` |
-| `--trace-dir` | Directory for per-round JSON artifacts | — |
-| `--show-peer-command` | Print the exact Codex argv | `false` |
-| `--show-peer-output` | Stream Codex stdout/stderr to stderr | `false` |
+| `--context-budget` | Max context size in bytes | `50000` |
 
-#### `doctor`
+## Stateful Sessions
 
-`opinionate doctor` checks:
+For iterative workflows, persist sessions across runs:
 
-- whether the Codex binary is installed
-- whether the installed Codex supports `exec`
-- whether Codex is authenticated enough to run non-interactively
-- whether your chosen model is available to the current Codex account
-- whether the Claude project skill exists at `.claude/skills/opinionate/SKILL.md`
-- whether the `opinionate` binary is discoverable on the machine
+```bash
+# First pass
+opinionate run \
+  --persist-session \
+  --mode plan \
+  --task "Review this architecture" \
+  --files "docs/plans/arch.md"
+# => sessionId: 20260323-151422-k4x9pt
 
-#### Output
+# After revisions
+opinionate continue \
+  --session 20260323-151422-k4x9pt \
+  --task "I addressed the coupling concern" \
+  --files "docs/plans/arch.md"
+```
 
-- **stdout**: JSON `DeliberationResult` object
-- **stderr**: Progress logs and errors
+The continuation carries forward accepted decisions, open questions, and file deltas — not the full raw transcript. Session data is stored locally under `.opinionate/sessions/`.
+
+## File Context Strategy
+
+`--file-strategy auto` (default) inlines small source files but sends large docs/plans by path so Codex reads them from disk. This keeps prompts compact and avoids timeout issues with oversized context.
+
+- `inline` — always embed file contents
+- `reference` — always send paths only
+- `auto` — smart default based on file size and type
 
 ## Model Resolution
 
-Model selection is explicit and predictable:
+1. `--model <name>` (highest priority)
+2. `OPINIONATE_MODEL` env var
+3. Codex default from `~/.codex/config.toml`
 
-1. `--model <name>` wins.
-2. `OPINIONATE_MODEL` is the fallback (deprecated: `AGENT_DELIBERATE_MODEL` is also accepted).
-3. If neither is set, `opinionate` does not inject a model flag and Codex uses its own configured default.
+Reasoning effort follows the same pattern with `--reasoning-effort` and `OPINIONATE_REASONING_EFFORT`.
 
-Use `opinionate doctor` to see which source will be used for the current run.
-
-## Inspecting Codex Execution
-
-When you want to see what Codex actually did:
+## Updating
 
 ```bash
-npx opinionate run \
-  --mode review \
-  --task "Review this PR" \
-  --cwd . \
-  --verbose \
-  --show-peer-command \
-  --trace-dir .opinionate/runs/latest
+# Global install
+npm install -g opinionate@latest
+opinionate install   # refresh the skill
+
+# Project-local
+npm update opinionate
+npx opinionate install
+
+# Zero-install always uses latest
+npx opinionate@latest install
 ```
 
-- `--verbose` prints round lifecycle, detected Codex version, and model source to stderr.
-- `--show-peer-command` prints the exact Codex command line.
-- `--show-peer-output` streams Codex stdout/stderr to stderr.
-- `--trace-dir` writes `round-<n>.json` artifacts with stdout, stderr, exit code, signal, duration, and command metadata.
-
-`stdout` stays reserved for the final JSON result.
-
-## Local Development
-
-For local package development:
-
-```bash
-pnpm install
-pnpm build
-pnpm test
-npm link
-```
-
-Then inside another project:
-
-```bash
-cd /path/to/other-project
-opinionate install
-opinionate doctor
-```
-
-If you prefer not to link globally:
-
-```bash
-cd /path/to/other-project
-node /path/to/opinionate/dist/src/cli.js install
-node /path/to/opinionate/dist/src/cli.js doctor
-```
-
-## Testing In Another Project
-
-1. Build this repo: `pnpm build`
-2. Install or link the binary.
-3. Install the project skill into the target repo.
-4. Restart Claude Code in that target repo.
-5. Run `opinionate doctor --cwd /path/to/project`
-6. Run a visible dry run with `--verbose --show-peer-command`
-
-The project skill should end up at `.claude/skills/opinionate/SKILL.md`.
+Re-run `opinionate install` after updating to refresh the skill file.
 
 ## Troubleshooting
 
-### Codex not installed
-
-Run:
+### Codex not found
 
 ```bash
 npm install -g @openai/codex
 opinionate doctor
 ```
 
-### Codex installed but not authenticated
-
-If `doctor` reports an auth problem, run:
+### Codex not authenticated
 
 ```bash
 codex login
 opinionate doctor
 ```
 
-### Model/account mismatch
+### Slow or timing out
 
-If `doctor --model <name>` reports that the model is unavailable to your account, either:
+Your Codex config may have `model_reasoning_effort = "xhigh"`. Try:
 
-- remove `--model` and let Codex use its default
-- choose a model your Codex account supports
-- update your Codex account/config and rerun `opinionate doctor`
+```bash
+opinionate run --reasoning-effort medium --retry-on-timeout --verbose ...
+```
 
 ### Skill not visible in Claude
 
-Confirm the file exists at:
+Confirm `.claude/skills/opinionate/SKILL.md` exists, then restart Claude Code.
 
-```bash
-.claude/skills/opinionate/SKILL.md
-```
+### Stale skill
 
-Then restart the Claude Code session and rerun `opinionate doctor`.
-
-### Modes
-
-| Mode | Use When |
-|------|----------|
-| **plan** | Before implementation — explore approaches, architecture, trade-offs |
-| **review** | After writing code — get a second opinion on correctness and quality |
-| **debug** | When stuck — brainstorm hypotheses and debugging strategies |
-| **decide** | Facing a choice — weigh options for libraries, patterns, API design |
-
-## Library API
-
-Use `opinionate` programmatically in your own tools:
-
-```typescript
-import { Deliberation, CodexCliAdapter } from 'opinionate';
-
-const result = await new Deliberation({
-  mode: 'plan',
-  peerAdapter: new CodexCliAdapter({ timeout: 60_000 }),
-  context: {
-    task: 'Design the caching layer',
-    files: [{ path: 'src/cache.ts', content: '...' }],
-    cwd: '/path/to/project',
-  },
-  maxRounds: 5,
-  timeout: 60_000,
-  contextBudget: 50_000,
-  onRoundComplete: (round, transcript) => {
-    console.error(`Round ${round} complete`);
-  },
-}).run();
-
-if (result.agreed) {
-  console.log('Decision:', result.decision);
-} else {
-  console.log('Recommended path:', result.recommendedPath);
-  console.log('Peer position:', result.peerPosition);
-  console.log('Disagreements:', result.keyDisagreements);
-}
-```
-
-## Writing a Custom Adapter
-
-Implement the `Adapter` interface to add support for any LLM:
-
-```typescript
-import type { Adapter, DeliberationContext } from 'opinionate';
-
-class MyAdapter implements Adapter {
-  name = 'my-adapter';
-
-  async initialize(): Promise<void> {
-    // Validate credentials, warm up connections
-  }
-
-  async isAvailable(): Promise<boolean> {
-    // Return true if the adapter can be used
-    return true;
-  }
-
-  async sendMessage(prompt: string, context: DeliberationContext): Promise<string> {
-    // Send the prompt to your LLM and return its response
-    const response = await myLlmClient.complete(prompt);
-    return response.text;
-  }
-
-  async cleanup(): Promise<void> {
-    // Release resources
-  }
-}
-```
-
-Then use it:
-
-```typescript
-const result = await new Deliberation({
-  mode: 'plan',
-  peerAdapter: new MyAdapter(),
-  // or as orchestrator:
-  // orchestratorAdapter: new MyAdapter(),
-  // peerAdapter: new CodexCliAdapter(),
-  ...
-}).run();
-```
+If `doctor` reports a version mismatch, run `opinionate install` to refresh the skill.
 
 ## Context Safety
 
-Before sending files to the peer agent, `opinionate` filters out sensitive files:
+Opinionate filters sensitive files before sending to the peer:
 
-**Excluded by default:** `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, and files containing `credential` or `secret` in their path.
+**Excluded:** `.env`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, paths containing `credential` or `secret`.
 
-**Custom exclusions:** Create a `.opinionateignore` file in your project root (same syntax as `.gitignore`):
-
-```gitignore
-# .opinionateignore
-config/production.yaml
-internal/keys/
-*.token
-```
-
-> **Note:** `.deliberateignore` is still supported for backwards compatibility but is deprecated. Rename it to `.opinionateignore`.
-
-> **Note:** Filtering is filename-pattern-based only. It does not scan file contents for embedded secrets. If you have hardcoded keys in source files, add those paths to `.opinionateignore`.
-
-## Architecture
-
-```
-src/
-├── core/
-│   ├── types.ts              # Interfaces, error types, defaults
-│   ├── deliberation.ts       # Main loop engine
-│   ├── context-builder.ts    # Context budgeting + safety filtering
-│   ├── agreement-detector.ts # Heuristic convergence detection
-│   ├── preflight.ts          # doctor command logic
-│   ├── runtime-config.ts     # CLI/env resolution
-│   └── execution-trace.ts    # verbose/trace artifacts
-├── adapters/
-│   ├── adapter.ts            # Adapter interface re-export
-│   └── codex-cli.ts          # Codex CLI adapter
-├── cli.ts                    # CLI entrypoint
-├── install.ts                # Skill installer
-├── util/
-│   ├── codex-cli-info.ts     # Codex capability/auth probing
-│   └── claude-skill-paths.ts # Claude skill path helpers
-└── index.ts                  # Public API
-```
+**Custom:** Add a `.opinionateignore` file (`.gitignore` syntax).
 
 ## Contributing
 
-Contributions welcome. The most impactful areas:
+Contributions welcome. High-impact areas:
 
-- **New adapters** — Gemini, local models (Ollama), Claude API
-- **Agreement detection** — Better heuristics or optional LLM-as-judge mode
-- **Context building** — Smarter file relevance ranking, content-based secret scanning
+- **New adapters** — Gemini, Ollama, Claude API
+- **Agreement detection** — LLM-as-judge mode
+- **Context building** — smarter relevance ranking
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for local setup.
 
 ## License
 

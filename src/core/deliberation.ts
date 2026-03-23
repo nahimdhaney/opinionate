@@ -5,10 +5,15 @@ import type {
   DeliberationMessage,
   DeliberationMode,
   DeliberationResult,
+  DeliberationSessionMemory,
 } from './types.js';
 import { DeliberationError, DEFAULT_CONFIG } from './types.js';
 import { ContextBuilder } from './context-builder.js';
 import { AgreementDetector } from './agreement-detector.js';
+import {
+  extractSessionMemoryFromContent,
+  synthesizeSessionMemoryFromResult,
+} from './session-memory.js';
 
 const MODE_TEMPLATES: Record<DeliberationMode, { opening: string; followUp: string }> = {
   plan: {
@@ -44,6 +49,8 @@ export class Deliberation {
   private agreementDetector: AgreementDetector;
   private transcript: DeliberationMessage[] = [];
   private currentRound = 0;
+  private partialRounds: number[] = [];
+  private latestSessionMemory?: DeliberationSessionMemory;
 
   constructor(config: DeliberationConfig) {
     this.config = {
@@ -51,6 +58,7 @@ export class Deliberation {
       maxRounds: config.maxRounds ?? DEFAULT_CONFIG.maxRounds,
       timeout: config.timeout ?? DEFAULT_CONFIG.timeout,
       contextBudget: config.contextBudget ?? DEFAULT_CONFIG.contextBudget,
+      retryOnTimeout: config.retryOnTimeout ?? false,
     };
     this.contextBuilder = new ContextBuilder(this.config.contextBudget, config.context.cwd);
     this.agreementDetector = new AgreementDetector();
@@ -76,22 +84,75 @@ export class Deliberation {
 
       for (let round = 1; round <= maxRounds; round++) {
         this.currentRound = round;
+        const roundStartedAt = Date.now();
+        this.config.onRoundStart?.(round);
 
         // Record orchestrator message
         this.addMessage('orchestrator', orchestratorPrompt, round);
 
         // Build full payload with context for the peer
-        const payload = this.contextBuilder.buildPromptPayload(
+        let roundContext = { ...context };
+        let payload = this.contextBuilder.buildPromptPayload(
           orchestratorPrompt,
-          context,
+          roundContext,
           this.transcript,
           round,
+        );
+        this.config.onVerbose?.(
+          `Round ${round}: prompt payload size: ${(Buffer.byteLength(payload, 'utf-8') / 1024).toFixed(1)}KB (budget: ${(this.config.contextBudget / 1024).toFixed(0)}KB)`,
         );
 
         // Send to peer
         let peerResponse: string;
+        let roundTimeout = this.config.timeout;
+        let retried = false;
         try {
-          peerResponse = await peerAdapter.sendMessage(payload, context);
+          while (true) {
+            try {
+              const raw = await peerAdapter.sendMessage(payload, roundContext, {
+                timeoutMs: roundTimeout,
+              });
+              const isPartial = typeof raw === 'object' && raw.partial;
+              const extracted = extractSessionMemoryFromContent(
+                typeof raw === 'string' ? raw : raw.content,
+              );
+              peerResponse = extracted.cleanContent;
+              if (extracted.memory) {
+                this.latestSessionMemory = extracted.memory;
+              }
+
+              if (isPartial) {
+                this.partialRounds.push(round);
+                this.config.onVerbose?.(
+                  `Round ${round}: peer timed out but returned partial response (${peerResponse.length} chars)`,
+                );
+              }
+              break;
+            } catch (err) {
+              if (
+                err instanceof DeliberationError &&
+                err.code === 'ADAPTER_TIMEOUT' &&
+                this.config.retryOnTimeout &&
+                !retried
+              ) {
+                retried = true;
+                roundTimeout = Math.round(roundTimeout * 1.5);
+                roundContext = { ...context, fileStrategy: 'reference' };
+                payload = this.contextBuilder.buildPromptPayload(
+                  orchestratorPrompt,
+                  roundContext,
+                  this.transcript,
+                  round,
+                );
+                this.config.onVerbose?.(
+                  `Round ${round}: timed out. Retrying with reference-only file context and timeout ${roundTimeout}ms`,
+                );
+                continue;
+              }
+
+              throw err;
+            }
+          }
         } catch (err) {
           if (err instanceof DeliberationError) throw err;
           throw new DeliberationError(
@@ -111,7 +172,10 @@ export class Deliberation {
         );
 
         // Notify progress
-        this.config.onRoundComplete?.(round, [...this.transcript]);
+        this.config.onRoundComplete?.(round, [...this.transcript], {
+          durationMs: Date.now() - roundStartedAt,
+          agreed,
+        });
 
         if (agreed) {
           return this.buildResult(synthesized, round);
@@ -160,7 +224,8 @@ export class Deliberation {
         ? `Generate a follow-up deliberation prompt for round ${round}. Mode: ${mode}. Task: ${context.task}. The peer's previous response was:\n\n${peerResponse}\n\nBuild on their input, challenge weak points, and drive toward convergence.`
         : `Generate an opening deliberation prompt. Mode: ${mode}. Task: ${context.task}. Start the ${mode} discussion.`;
 
-      return orchestratorAdapter.sendMessage(promptContext, context);
+      const raw = await orchestratorAdapter.sendMessage(promptContext, context);
+      return typeof raw === 'string' ? raw : raw.content;
     }
 
     // Template-based orchestrator (v1 default)
@@ -168,18 +233,24 @@ export class Deliberation {
 
     if (!peerResponse) {
       // Opening prompt
-      return templates.opening
+      return this.appendSessionMemoryRequest(
+        templates.opening
         .replace('{task}', context.task)
-        .replace('{context}', this.buildInlineContext(context));
+        .replace('{context}', this.buildInlineContext(context)),
+        context,
+      );
     }
 
     // Follow-up prompt
     const refinement = this.buildRefinement(peerResponse, round);
-    return templates.followUp
+    return this.appendSessionMemoryRequest(
+      templates.followUp
       .replace('{peerResponse}', peerResponse)
       .replace('{refinement}', refinement)
       .replace('{task}', context.task)
-      .replace('{context}', this.buildInlineContext(context));
+      .replace('{context}', this.buildInlineContext(context)),
+      context,
+    );
   }
 
   private buildRefinement(peerResponse: string, round: number): string {
@@ -188,9 +259,12 @@ export class Deliberation {
       return 'Let me build on your points and suggest a combined approach.';
     }
     if (round <= 4) {
+      if (round >= this.config.maxRounds) {
+        return 'This is our final round. Let us settle on the best path forward given everything discussed.\n\nPlease structure your final response as:\n**Verdict:** AGREE or DISAGREE\n**Decision:** [one-sentence summary of the best path]\n**Details:** [your supporting reasoning]';
+      }
       return 'We should converge on a direction. Here is what I think we both agree on so far.';
     }
-    return 'This is our final round. Let us settle on the best path forward given everything discussed.';
+    return 'This is our final round. Let us settle on the best path forward given everything discussed.\n\nPlease structure your final response as:\n**Verdict:** AGREE or DISAGREE\n**Decision:** [one-sentence summary of the best path]\n**Details:** [your supporting reasoning]';
   }
 
   private buildInlineContext(context: DeliberationContext): string {
@@ -213,6 +287,14 @@ export class Deliberation {
     return parts.join('\n') || 'No additional context provided.';
   }
 
+  private appendSessionMemoryRequest(prompt: string, context: DeliberationContext): string {
+    if (!context.persistSession && !context.sessionId) {
+      return prompt;
+    }
+
+    return `${prompt}\n\nAt the end of your response, append exactly one machine-readable block in this format:\n<opinionate-session-memory>\n{"acceptedDecisions":["..."],"rejectedIdeas":["..."],"openQuestions":["..."],"latestRecommendation":"...","latestPeerPosition":"..."}\n</opinionate-session-memory>\nUse empty arrays if needed.`;
+  }
+
   private addMessage(role: 'orchestrator' | 'peer', content: string, round: number): void {
     this.transcript.push({
       role,
@@ -226,7 +308,7 @@ export class Deliberation {
     synthesized: Partial<DeliberationResult>,
     rounds: number,
   ): DeliberationResult {
-    return {
+    const baseResult: DeliberationResult = {
       agreed: synthesized.agreed ?? false,
       summary: synthesized.summary ?? '',
       decision: synthesized.decision,
@@ -235,7 +317,18 @@ export class Deliberation {
       keyDisagreements: synthesized.keyDisagreements ?? [],
       transcript: [...this.transcript],
       rounds,
+      partialRounds: this.partialRounds.length > 0 ? [...this.partialRounds] : undefined,
+      sessionId: this.config.context.sessionId,
     };
+
+    if (this.config.context.persistSession || this.config.context.sessionId) {
+      baseResult.sessionMemory = synthesizeSessionMemoryFromResult(
+        baseResult,
+        this.latestSessionMemory,
+      );
+    }
+
+    return baseResult;
   }
 
   private async validateAdapter(adapter: Adapter): Promise<void> {

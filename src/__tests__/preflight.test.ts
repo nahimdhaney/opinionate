@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runDoctor } from '../core/preflight.js';
+import { formatDoctorResult, runDoctor } from '../core/preflight.js';
 
 describe('runDoctor', () => {
   it('reports missing codex and missing skill installation with actionable guidance', async () => {
@@ -14,6 +14,8 @@ describe('runDoctor', () => {
         verbose: false,
         showPeerCommand: false,
         showPeerOutput: false,
+        fileStrategy: 'auto',
+        retryOnTimeout: false,
       },
       codexInfo: null,
       skillInstalled: false,
@@ -41,6 +43,8 @@ describe('runDoctor', () => {
         verbose: false,
         showPeerCommand: false,
         showPeerOutput: false,
+        fileStrategy: 'auto',
+        retryOnTimeout: false,
       },
       codexInfo: {
         version: '0.116.0',
@@ -71,6 +75,8 @@ describe('runDoctor', () => {
         verbose: false,
         showPeerCommand: false,
         showPeerOutput: false,
+        fileStrategy: 'auto',
+        retryOnTimeout: false,
       },
       codexInfo: {
         version: '0.116.0',
@@ -89,5 +95,43 @@ describe('runDoctor', () => {
     expect(result.suggestions).toEqual(
       expect.arrayContaining([expect.stringContaining('explicit override')]),
     );
+  });
+
+  it('reports configured codex reasoning effort and warns on xhigh', async () => {
+    const result = await runDoctor({
+      cwd: '/tmp/project',
+      runtimeConfig: {
+        model: undefined,
+        modelSource: 'codex-default',
+        timeout: 60000,
+        contextBudget: 50000,
+        codexBin: 'codex',
+        verbose: false,
+        showPeerCommand: false,
+        showPeerOutput: false,
+        fileStrategy: 'auto',
+        retryOnTimeout: false,
+      },
+      codexInfo: {
+        version: '0.116.0',
+        rawVersion: 'codex-cli 0.116.0',
+        supportsExec: true,
+        supportsModelFlag: true,
+        supportsConfigFlag: true,
+      },
+      codexAuth: { ok: true },
+      skillInstalled: true,
+      linkedBinaryPath: '/usr/local/bin/opinionate',
+      readConfig: () => ({
+        path: '/Users/test/.codex/config.toml',
+        reasoningEffort: 'xhigh',
+      }),
+    });
+
+    expect(result.codexConfig?.reasoningEffort).toBe('xhigh');
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining('consider --reasoning-effort medium')]),
+    );
+    expect(formatDoctorResult(result)).toContain('Codex reasoning effort: xhigh');
   });
 });

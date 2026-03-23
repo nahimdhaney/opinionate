@@ -2,12 +2,14 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ModelSource } from './runtime-config.js';
 import type { CodexCliInfo } from '../util/codex-cli-info.js';
+import { parsePeerStderr } from '../util/peer-stderr-parser.js';
 
 export interface RoundTraceStart {
   round: number;
   command: string[];
   model?: string;
   modelSource: ModelSource;
+  reasoningEffort?: string;
   codexInfo?: CodexCliInfo;
   pid?: number;
 }
@@ -34,6 +36,7 @@ export interface ExecutionTrace {
   onPeerStderr(round: number, chunk: string): void;
   onRoundFinish(meta: Omit<RoundTraceRecord, 'stdout' | 'stderr'> & { stdout?: string; stderr?: string }): Promise<void>;
   recordRoundResult(record: RoundTraceRecord): Promise<void>;
+  emitVerbose(message: string): void;
 }
 
 function quoteArg(arg: string): string {
@@ -73,6 +76,7 @@ function emitChunk(
 export function createExecutionTrace(options: ExecutionTraceOptions): ExecutionTrace {
   const stderr = options.stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
   const rounds = new Map<number, RoundTraceRecord>();
+  const stderrBuffers = new Map<number, string>();
 
   const ensureRound = (round: number): RoundTraceRecord => {
     const existing = rounds.get(round);
@@ -95,6 +99,13 @@ export function createExecutionTrace(options: ExecutionTraceOptions): ExecutionT
   };
 
   return {
+    emitVerbose(message) {
+      if (!options.verbose) {
+        return;
+      }
+      stderr(`[opinionate] ${message}`);
+    },
+
     onRoundStart(meta) {
       const record = ensureRound(meta.round);
       rounds.set(meta.round, { ...record, ...meta });
@@ -104,6 +115,9 @@ export function createExecutionTrace(options: ExecutionTraceOptions): ExecutionT
         stderr(
           `[opinionate] Round ${meta.round}: model source: ${meta.modelSource}${meta.model ? ` (${meta.model})` : ''}`,
         );
+        if (meta.reasoningEffort) {
+          stderr(`[opinionate] Round ${meta.round}: reasoning effort override: ${meta.reasoningEffort}`);
+        }
         if (meta.codexInfo?.version) {
           stderr(`[opinionate] Round ${meta.round}: codex version ${meta.codexInfo.version}`);
         }
@@ -134,6 +148,15 @@ export function createExecutionTrace(options: ExecutionTraceOptions): ExecutionT
     onPeerStderr(round, chunk) {
       const record = ensureRound(round);
       record.stderr += chunk;
+      if (options.verbose) {
+        const buffered = `${stderrBuffers.get(round) ?? ''}${chunk}`;
+        const lines = buffered.split(/\r?\n/);
+        const remainder = lines.pop() ?? '';
+        stderrBuffers.set(round, remainder);
+        for (const diagnostic of parsePeerStderr(lines.join('\n'))) {
+          stderr(`[opinionate] Round ${round}: ${diagnostic.message}`);
+        }
+      }
       if (options.showPeerOutput) {
         emitChunk(stderr, `Round ${round} peer stderr`, chunk);
       }
@@ -151,6 +174,7 @@ export function createExecutionTrace(options: ExecutionTraceOptions): ExecutionT
 
     async recordRoundResult(record) {
       rounds.set(record.round, record);
+      stderrBuffers.delete(record.round);
 
       if (options.verbose) {
         const exitInfo =

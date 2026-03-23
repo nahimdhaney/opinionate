@@ -8,12 +8,25 @@
   "bin": {
     "opinionate": "./dist/src/cli.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nahimdhaney/opinionate.git"
+  },
+  "homepage": "https://github.com/nahimdhaney/opinionate",
+  "bugs": {
+    "url": "https://github.com/nahimdhaney/opinionate/issues"
+  },
+  "author": "Nahim Dhaney",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "install-skill": "node dist/src/install.js"
+    "install-skill": "node dist/src/cli.js install",
+    "prepublishOnly": "pnpm build && pnpm test"
   },
   "keywords": [
     "ai",
