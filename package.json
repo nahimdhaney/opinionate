@@ -1,0 +1,43 @@
+{
+  "name": "opinionate",
+  "version": "0.1.0",
+  "description": "Structured peer deliberation and Codex-backed second opinions for AI coding tools.",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "bin": {
+    "opinionate": "./dist/src/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "install-skill": "node dist/src/install.js"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "deliberation",
+    "codex",
+    "claude",
+    "peer-review",
+    "planning",
+    "code-review",
+    "diagnostics",
+    "trace"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "skill"
+  ]
+}
