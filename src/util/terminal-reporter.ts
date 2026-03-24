@@ -15,6 +15,7 @@ export class TerminalReporter {
   private readonly maxRounds: number;
   private readonly c: Colors;
   private startedAt = Date.now();
+  private lastRound = 0;
 
   constructor(options: TerminalReporterOptions) {
     this.stderr = options.stderr;
@@ -28,7 +29,7 @@ export class TerminalReporter {
     const parts = [
       `opinionate`,
       this.mode,
-      `${this.maxRounds} rounds max`,
+      `${this.maxRounds} round${this.maxRounds !== 1 ? 's' : ''} max`,
     ];
     if (model) {
       parts.push(model);
@@ -39,17 +40,62 @@ export class TerminalReporter {
     this.startedAt = Date.now();
   }
 
+  emitContextSummary(options: {
+    fileCount?: number;
+    inlineCount?: number;
+    referenceCount?: number;
+    hasGitLog?: boolean;
+    hasResume?: boolean;
+    sessionId?: string;
+    payloadSizeKB?: number;
+  }): void {
+    const parts: string[] = [];
+    if (options.fileCount) {
+      const detail = options.inlineCount !== undefined && options.referenceCount !== undefined
+        ? ` (${options.inlineCount} inline, ${options.referenceCount} by path)`
+        : '';
+      parts.push(`${this.c.dim('  Files:')} ${options.fileCount}${detail}`);
+    }
+    if (options.hasGitLog) {
+      parts.push(`${this.c.dim('  Git log:')} included`);
+    }
+    if (options.hasResume && options.sessionId) {
+      parts.push(`${this.c.dim('  Session:')} resuming ${this.c.cyan(options.sessionId)}`);
+    } else if (options.sessionId) {
+      parts.push(`${this.c.dim('  Session:')} ${this.c.cyan(options.sessionId)}`);
+    }
+    if (options.payloadSizeKB !== undefined) {
+      parts.push(`${this.c.dim('  Payload:')} ${options.payloadSizeKB.toFixed(1)}KB`);
+    }
+    if (parts.length > 0) {
+      for (const part of parts) {
+        this.emit(part);
+      }
+      this.emit('');
+    }
+  }
+
   emitRoundStart(round: number): void {
+    if (this.lastRound > 0 && round > this.lastRound) {
+      this.emit(this.c.dim('  ─────'));
+    }
+    this.lastRound = round;
     this.emit(`${this.c.cyan('◐')} Round ${round}/${this.maxRounds}: sending context to peer...`);
   }
 
   emitRoundWaiting(round: number, elapsedSec: number, stdoutBytes: number, stderrBytes: number): void {
-    const outputStatus = stdoutBytes > 0
-      ? `${(stdoutBytes / 1024).toFixed(1)}KB stdout`
-      : 'no output yet';
-    this.emit(
-      `${this.c.yellow('◑')} Round ${round}/${this.maxRounds}: waiting... ${elapsedSec}s elapsed, ${outputStatus} / ${(stderrBytes / 1024).toFixed(1)}KB stderr`,
-    );
+    if (this.verbose) {
+      const outputStatus = stdoutBytes > 0
+        ? `${(stdoutBytes / 1024).toFixed(1)}KB stdout`
+        : 'no output yet';
+      this.emit(
+        `${this.c.yellow('◑')} Round ${round}/${this.maxRounds}: waiting... ${elapsedSec}s elapsed, ${outputStatus} / ${(stderrBytes / 1024).toFixed(1)}KB stderr`,
+      );
+    } else {
+      this.emit(
+        `${this.c.yellow('◑')} Round ${round}/${this.maxRounds}: ${this.c.dim(`still thinking... ${elapsedSec}s`)}`,
+      );
+    }
   }
 
   emitRoundRetry(round: number, reason: string): void {

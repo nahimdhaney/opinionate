@@ -217,6 +217,7 @@ export class Deliberation {
     round: number,
   ): Promise<string> {
     const { orchestratorAdapter } = this.config;
+    let prompt: string;
 
     // If orchestratorAdapter is provided, use it to generate prompts
     if (orchestratorAdapter) {
@@ -225,7 +226,11 @@ export class Deliberation {
         : `Generate an opening deliberation prompt. Mode: ${mode}. Task: ${context.task}. Start the ${mode} discussion.`;
 
       const raw = await orchestratorAdapter.sendMessage(promptContext, context);
-      return typeof raw === 'string' ? raw : raw.content;
+      prompt = typeof raw === 'string' ? raw : raw.content;
+      return this.appendSessionMemoryRequest(
+        this.ensureTerminalVerdictRequest(prompt, round, peerResponse),
+        context,
+      );
     }
 
     // Template-based orchestrator (v1 default)
@@ -233,24 +238,46 @@ export class Deliberation {
 
     if (!peerResponse) {
       // Opening prompt
-      return this.appendSessionMemoryRequest(
-        templates.opening
+      prompt = templates.opening
         .replace('{task}', context.task)
-        .replace('{context}', this.buildInlineContext(context)),
+        .replace('{context}', this.buildInlineContext(context));
+      return this.appendSessionMemoryRequest(
+        this.ensureTerminalVerdictRequest(prompt, round, peerResponse),
         context,
       );
     }
 
     // Follow-up prompt
     const refinement = this.buildRefinement(peerResponse, round);
-    return this.appendSessionMemoryRequest(
-      templates.followUp
+    prompt = templates.followUp
       .replace('{peerResponse}', peerResponse)
       .replace('{refinement}', refinement)
       .replace('{task}', context.task)
-      .replace('{context}', this.buildInlineContext(context)),
+      .replace('{context}', this.buildInlineContext(context));
+    return this.appendSessionMemoryRequest(
+      this.ensureTerminalVerdictRequest(prompt, round, peerResponse),
       context,
     );
+  }
+
+  private buildTerminalVerdictInstruction(): string {
+    return 'Please structure your final response as:\n**Verdict:** AGREE or DISAGREE\n**Decision:** [one-sentence summary of the best path]\n**Details:** [your supporting reasoning]';
+  }
+
+  private ensureTerminalVerdictRequest(
+    prompt: string,
+    round: number,
+    peerResponse: string | null,
+  ): string {
+    if (round < this.config.maxRounds || prompt.includes('**Verdict:**')) {
+      return prompt;
+    }
+
+    const prelude = peerResponse
+      ? 'This is our final round. Let us settle on the best path forward given everything discussed.'
+      : 'This is the only round. Please settle on the best path forward given the current context.';
+
+    return `${prompt}\n\n${prelude}\n\n${this.buildTerminalVerdictInstruction()}`;
   }
 
   private buildRefinement(peerResponse: string, round: number): string {
@@ -260,11 +287,11 @@ export class Deliberation {
     }
     if (round <= 4) {
       if (round >= this.config.maxRounds) {
-        return 'This is our final round. Let us settle on the best path forward given everything discussed.\n\nPlease structure your final response as:\n**Verdict:** AGREE or DISAGREE\n**Decision:** [one-sentence summary of the best path]\n**Details:** [your supporting reasoning]';
+        return `This is our final round. Let us settle on the best path forward given everything discussed.\n\n${this.buildTerminalVerdictInstruction()}`;
       }
       return 'We should converge on a direction. Here is what I think we both agree on so far.';
     }
-    return 'This is our final round. Let us settle on the best path forward given everything discussed.\n\nPlease structure your final response as:\n**Verdict:** AGREE or DISAGREE\n**Decision:** [one-sentence summary of the best path]\n**Details:** [your supporting reasoning]';
+    return `This is our final round. Let us settle on the best path forward given everything discussed.\n\n${this.buildTerminalVerdictInstruction()}`;
   }
 
   private buildInlineContext(context: DeliberationContext): string {

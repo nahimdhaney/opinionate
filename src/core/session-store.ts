@@ -128,11 +128,16 @@ export async function createSession(input: CreateSessionInput): Promise<Delibera
 }
 
 export async function loadSession(cwd: string, sessionId: string): Promise<DeliberationSession> {
+  let raw: string;
   try {
-    const raw = await readFile(getSessionFile(cwd, sessionId), 'utf8');
-    return JSON.parse(raw) as DeliberationSession;
-  } catch (error) {
+    raw = await readFile(getSessionFile(cwd, sessionId), 'utf8');
+  } catch {
     throw new Error(`Session "${sessionId}" not found.`);
+  }
+  try {
+    return JSON.parse(raw) as DeliberationSession;
+  } catch {
+    throw new Error(`Session "${sessionId}" exists but contains invalid JSON. Delete .opinionate/sessions/${sessionId}/ and retry.`);
   }
 }
 

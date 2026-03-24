@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 220" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 280" fill="none">
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#09090b;stop-opacity:1" />
-      <stop offset="50%" style="stop-color:#0c0a1d;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#110f2e;stop-opacity:1" />
+      <stop offset="0%" style="stop-color:#09090b" />
+      <stop offset="40%" style="stop-color:#0c0a1d" />
+      <stop offset="100%" style="stop-color:#0f172a" />
     </linearGradient>
     <linearGradient id="purple" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#7c3aed" />
@@ -14,16 +14,32 @@
       <stop offset="100%" style="stop-color:#22d3ee" />
     </linearGradient>
     <linearGradient id="bridge" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" style="stop-color:#7c3aed;stop-opacity:0.8" />
-      <stop offset="50%" style="stop-color:#c084fc;stop-opacity:0.4" />
-      <stop offset="100%" style="stop-color:#22d3ee;stop-opacity:0.8" />
+      <stop offset="0%" style="stop-color:#7c3aed;stop-opacity:0.9" />
+      <stop offset="50%" style="stop-color:#c084fc;stop-opacity:0.5" />
+      <stop offset="100%" style="stop-color:#22d3ee;stop-opacity:0.9" />
+    </linearGradient>
+    <linearGradient id="titleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#e2e8f0" />
+      <stop offset="50%" style="stop-color:#f8fafc" />
+      <stop offset="100%" style="stop-color:#e2e8f0" />
     </linearGradient>
     <linearGradient id="glow" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#7c3aed;stop-opacity:0.15" />
+      <stop offset="0%" style="stop-color:#7c3aed;stop-opacity:0.12" />
       <stop offset="100%" style="stop-color:#7c3aed;stop-opacity:0" />
     </linearGradient>
+    <linearGradient id="glowCyan" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:0.08" />
+      <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:0" />
+    </linearGradient>
     <filter id="softglow">
-      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <filter id="textglow">
+      <feGaussianBlur stdDeviation="8" result="blur" />
       <feMerge>
         <feMergeNode in="blur" />
         <feMergeNode in="SourceGraphic" />
@@ -32,60 +48,85 @@
   </defs>
 
   <!-- Background -->
-  <rect width="800" height="220" rx="16" fill="url(#bg)" />
+  <rect width="800" height="280" rx="16" fill="url(#bg)" />
 
-  <!-- Ambient glow -->
-  <ellipse cx="400" cy="80" rx="250" ry="60" fill="url(#glow)" />
-
-  <!-- Thought bubble left (Claude) -->
-  <g transform="translate(135, 60)" filter="url(#softglow)">
-    <circle cx="0" cy="0" r="36" fill="none" stroke="url(#purple)" stroke-width="1.5" opacity="0.6" />
-    <circle cx="0" cy="0" r="24" fill="none" stroke="#7c3aed" stroke-width="1" opacity="0.3" />
-    <text x="0" y="6" font-family="'Inter', system-ui, sans-serif" font-size="24" fill="#a78bfa" text-anchor="middle" font-weight="700">C</text>
-    <text x="0" y="56" font-family="'Inter', system-ui, sans-serif" font-size="10" fill="#8b5cf6" text-anchor="middle" font-weight="500" letter-spacing="1">CLAUDE</text>
+  <!-- Subtle grid pattern -->
+  <g opacity="0.03">
+    <line x1="0" y1="40" x2="800" y2="40" stroke="#fff" stroke-width="0.5" />
+    <line x1="0" y1="80" x2="800" y2="80" stroke="#fff" stroke-width="0.5" />
+    <line x1="0" y1="120" x2="800" y2="120" stroke="#fff" stroke-width="0.5" />
+    <line x1="0" y1="160" x2="800" y2="160" stroke="#fff" stroke-width="0.5" />
+    <line x1="0" y1="200" x2="800" y2="200" stroke="#fff" stroke-width="0.5" />
+    <line x1="0" y1="240" x2="800" y2="240" stroke="#fff" stroke-width="0.5" />
+    <line x1="100" y1="0" x2="100" y2="280" stroke="#fff" stroke-width="0.5" />
+    <line x1="200" y1="0" x2="200" y2="280" stroke="#fff" stroke-width="0.5" />
+    <line x1="300" y1="0" x2="300" y2="280" stroke="#fff" stroke-width="0.5" />
+    <line x1="400" y1="0" x2="400" y2="280" stroke="#fff" stroke-width="0.5" />
+    <line x1="500" y1="0" x2="500" y2="280" stroke="#fff" stroke-width="0.5" />
+    <line x1="600" y1="0" x2="600" y2="280" stroke="#fff" stroke-width="0.5" />
+    <line x1="700" y1="0" x2="700" y2="280" stroke="#fff" stroke-width="0.5" />
   </g>
 
-  <!-- Thought bubble right (Codex) -->
-  <g transform="translate(665, 60)" filter="url(#softglow)">
-    <circle cx="0" cy="0" r="36" fill="none" stroke="url(#cyan)" stroke-width="1.5" opacity="0.6" />
-    <circle cx="0" cy="0" r="24" fill="none" stroke="#06b6d4" stroke-width="1" opacity="0.3" />
-    <text x="0" y="6" font-family="'Inter', system-ui, sans-serif" font-size="24" fill="#22d3ee" text-anchor="middle" font-weight="700">X</text>
-    <text x="0" y="56" font-family="'Inter', system-ui, sans-serif" font-size="10" fill="#06b6d4" text-anchor="middle" font-weight="500" letter-spacing="1">CODEX</text>
+  <!-- Ambient glows -->
+  <ellipse cx="200" cy="90" rx="180" ry="80" fill="url(#glow)" />
+  <ellipse cx="600" cy="90" rx="180" ry="80" fill="url(#glowCyan)" />
+
+  <!-- Claude agent -->
+  <g transform="translate(155, 75)" filter="url(#softglow)">
+    <circle cx="0" cy="0" r="42" fill="none" stroke="url(#purple)" stroke-width="2" opacity="0.5" />
+    <circle cx="0" cy="0" r="30" fill="#7c3aed" fill-opacity="0.08" stroke="#7c3aed" stroke-width="1.5" opacity="0.7" />
+    <text x="0" y="7" font-family="'Inter', system-ui, sans-serif" font-size="26" fill="#a78bfa" text-anchor="middle" font-weight="800">C</text>
+    <text x="0" y="62" font-family="'Inter', system-ui, sans-serif" font-size="10" fill="#8b5cf6" text-anchor="middle" font-weight="600" letter-spacing="2">CLAUDE</text>
+  </g>
+
+  <!-- Codex agent -->
+  <g transform="translate(645, 75)" filter="url(#softglow)">
+    <circle cx="0" cy="0" r="42" fill="none" stroke="url(#cyan)" stroke-width="2" opacity="0.5" />
+    <circle cx="0" cy="0" r="30" fill="#06b6d4" fill-opacity="0.08" stroke="#06b6d4" stroke-width="1.5" opacity="0.7" />
+    <text x="0" y="7" font-family="'Inter', system-ui, sans-serif" font-size="26" fill="#22d3ee" text-anchor="middle" font-weight="800">X</text>
+    <text x="0" y="62" font-family="'Inter', system-ui, sans-serif" font-size="10" fill="#06b6d4" text-anchor="middle" font-weight="600" letter-spacing="2">CODEX</text>
   </g>
 
   <!-- Bridge connection -->
-  <path d="M 185 60 Q 400 20 615 60" fill="none" stroke="url(#bridge)" stroke-width="2" stroke-dasharray="8 5" opacity="0.7" />
+  <path d="M 205 75 Q 400 25 595 75" fill="none" stroke="url(#bridge)" stroke-width="2" stroke-dasharray="6 4" opacity="0.6" />
 
-  <!-- Animated pulse along bridge -->
-  <circle r="4" fill="#c084fc" opacity="0.9">
-    <animateMotion dur="2.5s" repeatCount="indefinite" path="M 185 60 Q 400 20 615 60" />
-    <animate attributeName="opacity" values="0.4;1;0.4" dur="2.5s" repeatCount="indefinite" />
+  <!-- Animated pulses -->
+  <circle r="5" fill="#c084fc" opacity="0.9">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M 205 75 Q 400 25 595 75" />
+    <animate attributeName="opacity" values="0.3;1;0.3" dur="3s" repeatCount="indefinite" />
+    <animate attributeName="r" values="3;5;3" dur="3s" repeatCount="indefinite" />
   </circle>
-  <circle r="4" fill="#67e8f9" opacity="0.9">
-    <animateMotion dur="2.5s" repeatCount="indefinite" path="M 615 60 Q 400 20 185 60" />
-    <animate attributeName="opacity" values="0.4;1;0.4" dur="2.5s" repeatCount="indefinite" />
+  <circle r="5" fill="#67e8f9" opacity="0.9">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M 595 75 Q 400 25 205 75" />
+    <animate attributeName="opacity" values="0.3;1;0.3" dur="3s" repeatCount="indefinite" />
+    <animate attributeName="r" values="3;5;3" dur="3s" repeatCount="indefinite" />
   </circle>
 
   <!-- Center terminal window -->
-  <g transform="translate(310, 38)">
-    <rect x="0" y="0" width="180" height="58" rx="6" fill="#0f0f23" stroke="#27274a" stroke-width="1" />
+  <g transform="translate(310, 42)">
+    <rect x="0" y="0" width="180" height="70" rx="8" fill="#0f0f23" stroke="#1e1b4b" stroke-width="1.5" />
     <!-- Window dots -->
-    <circle cx="12" cy="10" r="3" fill="#ef4444" opacity="0.7" />
-    <circle cx="22" cy="10" r="3" fill="#eab308" opacity="0.7" />
-    <circle cx="32" cy="10" r="3" fill="#22c55e" opacity="0.7" />
+    <circle cx="14" cy="12" r="3.5" fill="#ef4444" opacity="0.8" />
+    <circle cx="26" cy="12" r="3.5" fill="#eab308" opacity="0.8" />
+    <circle cx="38" cy="12" r="3.5" fill="#22c55e" opacity="0.8" />
     <!-- Terminal text -->
-    <text x="14" y="32" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', monospace" font-size="9" fill="#a78bfa">$ opinionate run</text>
-    <text x="14" y="48" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', monospace" font-size="9" fill="#4ade80" opacity="0.7">agreed (round 3/5)</text>
+    <text x="14" y="34" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', monospace" font-size="10" fill="#94a3b8">$ opinionate run</text>
+    <text x="14" y="48" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', monospace" font-size="9" fill="#a78bfa">◐ Round 1/3...</text>
+    <text x="14" y="62" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', monospace" font-size="9" fill="#4ade80">✓ agreed (2 rounds, 84s)</text>
   </g>
 
   <!-- Title -->
-  <text x="400" y="160" font-family="'Inter', system-ui, -apple-system, sans-serif" font-size="36" fill="#f1f5f9" text-anchor="middle" font-weight="800" letter-spacing="-0.5">opinionate</text>
+  <text x="400" y="195" font-family="'Inter', system-ui, -apple-system, sans-serif" font-size="42" fill="url(#titleGrad)" text-anchor="middle" font-weight="900" letter-spacing="-1" filter="url(#textglow)">opinionate</text>
 
   <!-- Tagline -->
-  <text x="400" y="185" font-family="'Inter', system-ui, -apple-system, sans-serif" font-size="12" fill="#64748b" text-anchor="middle" font-weight="400" letter-spacing="3">STRUCTURED PEER DELIBERATION</text>
+  <text x="400" y="222" font-family="'Inter', system-ui, -apple-system, sans-serif" font-size="13" fill="#64748b" text-anchor="middle" font-weight="400" letter-spacing="4">STRUCTURED PEER DELIBERATION</text>
 
-  <!-- Subtle bottom accent line -->
-  <line x1="280" y1="198" x2="520" y2="198" stroke="url(#bridge)" stroke-width="1" opacity="0.25" />
+  <!-- Version badge -->
+  <g transform="translate(400, 238)">
+    <rect x="-28" y="0" width="56" height="18" rx="9" fill="#1e1b4b" stroke="#7c3aed" stroke-width="0.5" opacity="0.6" />
+    <text x="0" y="13" font-family="'SF Mono', monospace" font-size="9" fill="#a78bfa" text-anchor="middle" font-weight="500">v0.1.0</text>
+  </g>
 
-  <text x="400" y="212" font-family="'Inter', system-ui, -apple-system, sans-serif" font-size="10" fill="#475569" text-anchor="middle" letter-spacing="1">Two AI agents. One decision. Your approval.</text>
+  <!-- Bottom tagline -->
+  <text x="400" y="272" font-family="'Inter', system-ui, -apple-system, sans-serif" font-size="10" fill="#475569" text-anchor="middle" letter-spacing="1.5">Two agents deliberate. You decide.</text>
 </svg>

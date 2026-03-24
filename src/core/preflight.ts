@@ -132,6 +132,10 @@ export async function runDoctor(input: RunDoctorInput): Promise<DoctorResult> {
     issues.push(
       `Claude project skill missing at ${skillFile}. Run \`opinionate install\` from the project root.`,
     );
+  } else if (skillVersion && input.packageVersion && skillVersion !== input.packageVersion) {
+    warnings.push(
+      `Skill version (${skillVersion}) does not match package version (${input.packageVersion}). Run \`opinionate install\` to update.`,
+    );
   }
 
   if (input.runtimeConfig.modelSource === 'cli') {
@@ -192,6 +196,13 @@ export function formatDoctorResult(result: DoctorResult): string {
         failLine(
           'Codex auth: not authenticated',
           'Run `codex login` and rerun `opinionate doctor`',
+        ),
+      );
+    } else if (result.codexAuth?.ok === false && result.codexAuth.reason === 'model_unavailable') {
+      lines.push(
+        failLine(
+          'Codex auth: authenticated but model unavailable',
+          'Choose a supported model or remove the override',
         ),
       );
     } else if (result.codexAuth?.ok === false && result.codexAuth.reason === 'exec_failed') {

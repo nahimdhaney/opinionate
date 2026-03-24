@@ -15,6 +15,11 @@ const AGREEMENT_SIGNALS = [
   'that\'s a solid',
   'on board with',
   'works for me',
+  'no blocking findings',
+  'launch-ready at the planning level',
+  'ready to approve',
+  'approved at the planning level',
+  'treat this as approved',
 ];
 
 const DISAGREEMENT_SIGNALS = [
@@ -30,6 +35,11 @@ const DISAGREEMENT_SIGNALS = [
   'i\'d recommend against',
   'won\'t work because',
   'issue with this',
+  'still have blocking findings',
+  'blocking findings remain',
+  'not launch-ready',
+  'not launch ready',
+  'not ready to approve',
 ];
 
 interface SynthesisState {

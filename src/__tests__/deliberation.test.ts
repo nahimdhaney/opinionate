@@ -95,6 +95,35 @@ describe('Deliberation', () => {
     expect(result.rounds).toBe(1);
   });
 
+  it('requests a verdict on terminal opening prompts and treats approval-grade responses as agreement', async () => {
+    let capturedPrompt = '';
+    const adapter: Adapter = {
+      name: 'mock',
+      initialize: vi.fn().mockResolvedValue(undefined),
+      isAvailable: vi.fn().mockResolvedValue(true),
+      cleanup: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn().mockImplementation(async (prompt: string) => {
+        capturedPrompt = prompt;
+        return 'No blocking findings. I would now treat the rollout plan as launch-ready at the planning level.';
+      }),
+    };
+
+    const deliberation = new Deliberation({
+      mode: 'plan',
+      peerAdapter: adapter,
+      context: baseContext,
+      maxRounds: 1,
+      timeout: 5000,
+      contextBudget: 50_000,
+    });
+
+    const result = await deliberation.run();
+
+    expect(capturedPrompt).toContain('**Verdict:** AGREE or DISAGREE');
+    expect(result.agreed).toBe(true);
+    expect(result.rounds).toBe(1);
+  });
+
   it('returns inconclusive after max rounds with disagreement', async () => {
     const adapter = createMockAdapter([
       'I disagree, we should use Memcached instead.',

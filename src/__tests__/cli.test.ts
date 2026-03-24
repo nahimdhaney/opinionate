@@ -229,8 +229,10 @@ describe('runCli', () => {
     expect(exitCode).toBe(0);
     expect(output.stderr()).toContain('opinionate');
     expect(output.stderr()).toContain('Installing skill...');
-    expect(output.stderr()).toContain('✓ Skill installed to /tmp/project/.claude/skills/opinionate/SKILL.md');
-    expect(output.stderr()).toContain('Checking environment...');
+    expect(output.stderr()).toContain('✓ Skill installed to');
+    expect(output.stderr()).toContain('Checking Codex CLI...');
+    expect(output.stderr()).toContain('Testing Codex auth...');
+    expect(output.stderr()).toContain('All checks passed.');
     expect(output.stderr()).toContain('Next:');
     expect(output.stderr()).toContain('/opinionate');
   });
@@ -438,5 +440,230 @@ describe('runCli', () => {
     expect(capturedPrompt).toContain('## Changes Since Last Review');
     expect(capturedPrompt).toContain('docs-plan.md');
     expect(capturedPrompt).toContain('+Line 1 updated');
+  });
+
+  it('supports one-round persisted plan loops and stops as soon as a later round agrees', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'opinionate-cli-live-loop-'));
+    tempDirs.push(cwd);
+    writeFileSync(join(cwd, 'plan.md'), 'Draft plan\n');
+
+    let callCount = 0;
+    const resolveAdapter = () => ({
+      name: 'mock',
+      initialize: vi.fn().mockResolvedValue(undefined),
+      isAvailable: vi.fn().mockResolvedValue(true),
+      cleanup: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return [
+            '**Verdict:** DISAGREE',
+            '**Decision:** The plan still needs revision.',
+            '**Details:** The trust boundary is unclear.',
+            '<opinionate-session-memory>',
+            JSON.stringify({
+              acceptedDecisions: [],
+              rejectedIdeas: ['Ship the current draft'],
+              openQuestions: ['How is the trust boundary enforced?'],
+              latestRecommendation: 'Clarify the trust boundary before approving.',
+              latestPeerPosition: 'The plan still needs revision.',
+            }),
+            '</opinionate-session-memory>',
+          ].join('\n');
+        }
+
+        return [
+          '**Verdict:** AGREE',
+          '**Decision:** The revised plan is solid.',
+          '**Details:** The trust boundary is now clear.',
+          '<opinionate-session-memory>',
+          JSON.stringify({
+            acceptedDecisions: ['Clarify the trust boundary in the plan'],
+            rejectedIdeas: ['Ship the current draft'],
+            openQuestions: [],
+            latestRecommendation: 'The revised plan is solid.',
+            latestPeerPosition: 'The revised plan is solid.',
+          }),
+          '</opinionate-session-memory>',
+        ].join('\n');
+      }),
+    });
+
+    const first = createMemoryIO();
+    const firstExit = await runCli(
+      [
+        'node',
+        'opinionate',
+        'run',
+        '--persist-session',
+        '--max-rounds',
+        '1',
+        '--mode',
+        'plan',
+        '--task',
+        'Review this plan',
+        '--files',
+        'plan.md',
+      ],
+      {
+        io: first.io,
+        env: {},
+        cwd: () => cwd,
+        resolveAdapter,
+      },
+    );
+
+    expect(firstExit).toBe(0);
+    const firstJson = JSON.parse(first.stdout());
+    expect(firstJson.agreed).toBe(false);
+    expect(firstJson.rounds).toBe(1);
+    expect(firstJson.sessionId).toBeTruthy();
+    expect(firstJson.peerPosition).toContain('The plan still needs revision.');
+    expect(callCount).toBe(1);
+
+    writeFileSync(join(cwd, 'plan.md'), 'Draft plan\nClarified trust boundary.\n');
+
+    const second = createMemoryIO();
+    const secondExit = await runCli(
+      [
+        'node',
+        'opinionate',
+        'continue',
+        '--session',
+        firstJson.sessionId,
+        '--max-rounds',
+        '1',
+        '--mode',
+        'plan',
+        '--task',
+        'Clarified the trust boundary',
+        '--files',
+        'plan.md',
+      ],
+      {
+        io: second.io,
+        env: {},
+        cwd: () => cwd,
+        resolveAdapter,
+      },
+    );
+
+    expect(secondExit).toBe(0);
+    const secondJson = JSON.parse(second.stdout());
+    expect(secondJson.agreed).toBe(true);
+    expect(secondJson.rounds).toBe(1);
+    expect(secondJson.sessionId).toBe(firstJson.sessionId);
+    expect(secondJson.peerPosition).toContain('The revised plan is solid.');
+    expect(callCount).toBe(2);
+  });
+
+  it('treats approval-grade peer responses as agreement in one-round persisted sessions', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'opinionate-cli-live-loop-approval-'));
+    tempDirs.push(cwd);
+    writeFileSync(join(cwd, 'plan.md'), 'Draft plan\n');
+
+    let callCount = 0;
+    const resolveAdapter = () => ({
+      name: 'mock',
+      initialize: vi.fn().mockResolvedValue(undefined),
+      isAvailable: vi.fn().mockResolvedValue(true),
+      cleanup: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return [
+            '**Verdict:** DISAGREE',
+            '**Decision:** The plan still needs revision.',
+            '**Details:** The rollout safety controls are underspecified.',
+            '<opinionate-session-memory>',
+            JSON.stringify({
+              acceptedDecisions: [],
+              rejectedIdeas: ['Ship the current draft'],
+              openQuestions: ['How do we gate rollout safety?'],
+              latestRecommendation: 'Add explicit rollout controls before approving.',
+              latestPeerPosition: 'The plan still needs revision.',
+            }),
+            '</opinionate-session-memory>',
+          ].join('\n');
+        }
+
+        return [
+          'No blocking findings. I would now treat the revised rollout plan as launch-ready at the planning level.',
+          '<opinionate-session-memory>',
+          JSON.stringify({
+            acceptedDecisions: ['Add explicit rollout safety controls'],
+            rejectedIdeas: ['Ship the current draft'],
+            openQuestions: [],
+            latestRecommendation: 'The revised rollout plan is launch-ready at the planning level.',
+            latestPeerPosition: 'No blocking findings remain.',
+          }),
+          '</opinionate-session-memory>',
+        ].join('\n');
+      }),
+    });
+
+    const first = createMemoryIO();
+    const firstExit = await runCli(
+      [
+        'node',
+        'opinionate',
+        'run',
+        '--persist-session',
+        '--max-rounds',
+        '1',
+        '--mode',
+        'plan',
+        '--task',
+        'Review this rollout plan',
+        '--files',
+        'plan.md',
+      ],
+      {
+        io: first.io,
+        env: {},
+        cwd: () => cwd,
+        resolveAdapter,
+      },
+    );
+
+    expect(firstExit).toBe(0);
+    const firstJson = JSON.parse(first.stdout());
+    expect(firstJson.agreed).toBe(false);
+    expect(firstJson.sessionId).toBeTruthy();
+
+    writeFileSync(join(cwd, 'plan.md'), 'Draft plan\nAdded rollout safety controls.\n');
+
+    const second = createMemoryIO();
+    const secondExit = await runCli(
+      [
+        'node',
+        'opinionate',
+        'continue',
+        '--session',
+        firstJson.sessionId,
+        '--max-rounds',
+        '1',
+        '--mode',
+        'plan',
+        '--task',
+        'Added rollout safety controls',
+        '--files',
+        'plan.md',
+      ],
+      {
+        io: second.io,
+        env: {},
+        cwd: () => cwd,
+        resolveAdapter,
+      },
+    );
+
+    expect(secondExit).toBe(0);
+    const secondJson = JSON.parse(second.stdout());
+    expect(secondJson.agreed).toBe(true);
+    expect(secondJson.sessionId).toBe(firstJson.sessionId);
+    expect(secondJson.continuedFromSession).toBe(true);
+    expect(secondJson.peerPosition).toContain('launch-ready at the planning level');
+    expect(callCount).toBe(2);
   });
 });

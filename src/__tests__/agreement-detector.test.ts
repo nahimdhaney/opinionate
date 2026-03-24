@@ -121,6 +121,34 @@ describe('AgreementDetector', () => {
     expect(result.agreed).toBe(true);
   });
 
+  it('treats approval-grade peer responses as agreement even without a structured verdict', () => {
+    const transcript: DeliberationMessage[] = [
+      makeMessage('orchestrator', 'Is this rollout plan ready?', 1),
+      makeMessage(
+        'peer',
+        'No blocking findings. I would now treat the rollout plan as launch-ready at the planning level.',
+        1,
+      ),
+    ];
+
+    const result = detector.evaluate(transcript, 1);
+    expect(result.agreed).toBe(true);
+  });
+
+  it('does not mistake nearby blocker language for agreement', () => {
+    const transcript: DeliberationMessage[] = [
+      makeMessage('orchestrator', 'Is this rollout plan ready?', 1),
+      makeMessage(
+        'peer',
+        'The plan is close to launch-ready, but I still have blocking findings before I would approve it.',
+        1,
+      ),
+    ];
+
+    const result = detector.evaluate(transcript, 1);
+    expect(result.agreed).toBe(false);
+  });
+
   it('lets a structured DISAGREE verdict override mixed agreement language', () => {
     const transcript: DeliberationMessage[] = [
       makeMessage('orchestrator', 'Should we keep this design?', 1),

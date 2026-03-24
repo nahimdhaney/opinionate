@@ -23,13 +23,17 @@ export interface ResolveRuntimeConfigInput {
   env?: Record<string, string | undefined>;
 }
 
+const VALID_REASONING_EFFORTS = new Set<string>(['low', 'medium', 'high', 'xhigh']);
+const VALID_FILE_STRATEGIES = new Set<string>(['auto', 'inline', 'reference']);
+
 function parseNumber(value: string | boolean | undefined, fallback: number): number {
   if (typeof value !== 'string' || value.trim() === '') {
     return fallback;
   }
 
   const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
 }
 
 function envWithFallback(
@@ -54,18 +58,30 @@ export function resolveRuntimeConfig(input: ResolveRuntimeConfigInput): RuntimeC
   const cliModel = typeof input.argv.model === 'string' ? input.argv.model : undefined;
   const envModel = envWithFallback(env, 'OPINIONATE_MODEL', 'AGENT_DELIBERATE_MODEL');
   const model = cliModel ?? envModel;
-  const cliReasoningEffort =
+  const rawReasoningEffort =
     typeof input.argv['reasoning-effort'] === 'string'
-      ? input.argv['reasoning-effort'] as ReasoningEffort
+      ? input.argv['reasoning-effort']
       : undefined;
-  const envReasoningEffort = envWithFallback(
+  const rawEnvReasoningEffort = envWithFallback(
     env,
     'OPINIONATE_REASONING_EFFORT',
     'AGENT_DELIBERATE_REASONING_EFFORT',
-  ) as ReasoningEffort | undefined;
-  const fileStrategy =
+  );
+  const cliReasoningEffort =
+    rawReasoningEffort && VALID_REASONING_EFFORTS.has(rawReasoningEffort)
+      ? rawReasoningEffort as ReasoningEffort
+      : undefined;
+  const envReasoningEffort =
+    rawEnvReasoningEffort && VALID_REASONING_EFFORTS.has(rawEnvReasoningEffort)
+      ? rawEnvReasoningEffort as ReasoningEffort
+      : undefined;
+  const rawFileStrategy =
     typeof input.argv['file-strategy'] === 'string'
-      ? input.argv['file-strategy'] as FileStrategy
+      ? input.argv['file-strategy']
+      : undefined;
+  const fileStrategy: FileStrategy =
+    rawFileStrategy && VALID_FILE_STRATEGIES.has(rawFileStrategy)
+      ? rawFileStrategy as FileStrategy
       : 'auto';
 
   return {

@@ -2,7 +2,7 @@
 
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Deliberation } from './core/deliberation.js';
 import { ContextBuilder } from './core/context-builder.js';
@@ -37,6 +37,21 @@ import type { InstallSkillResult } from './install.js';
 import { DEFAULT_CONFIG, DeliberationError } from './core/types.js';
 import { CodexCliAdapter } from './adapters/codex-cli.js';
 
+function getPackageVersion(): string {
+  try {
+    let dir = dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 5; i++) {
+      const pkg = resolve(dir, 'package.json');
+      try {
+        const json = JSON.parse(readFileSync(pkg, 'utf8'));
+        if (json.name === 'opinionate' && json.version) return json.version;
+      } catch { /* continue */ }
+      dir = dirname(dir);
+    }
+  } catch { /* ignore */ }
+  return '0.0.0';
+}
+
 function getErrorRemedy(error: unknown): string | undefined {
   if (!(error instanceof DeliberationError)) return undefined;
   switch (error.code) {
@@ -47,6 +62,8 @@ function getErrorRemedy(error: unknown): string | undefined {
     case 'ADAPTER_ERROR':
       if (error.message.toLowerCase().includes('auth'))
         return 'Codex auth failed. Run: codex login';
+      if (error.message.toLowerCase().includes('usage limit') || error.message.toLowerCase().includes('purchase more credits'))
+        return 'Codex usage limit reached. Check https://chatgpt.com/codex/settings/usage or wait for credits to reset.';
       return 'Peer error. Run with --verbose --show-peer-output for details';
     default:
       return undefined;
@@ -466,6 +483,7 @@ async function runDoctorCommand(
     const result = await doctor({
       cwd,
       runtimeConfig,
+      packageVersion: getPackageVersion(),
     });
     log(io, formatDoctorResult(result));
     return result.ok ? 0 : 1;
@@ -488,11 +506,11 @@ async function runInstallCommand(
   const doctor = dependencies.runDoctor ?? defaultRunDoctor;
 
   const c = createColors(detectColorSupport());
-  log(io, renderBox('opinionate v0.1.0'));
-  log(io, '');
-  log(io, c.cyan('Installing skill...'));
+  log(io, renderBox(`opinionate v${getPackageVersion()}`));
   log(io, '');
 
+  // Step 1: Install skill
+  log(io, c.cyan('1. Installing skill...'));
   let installResult: InstallSkillResult;
   try {
     installResult = await install(cwd);
@@ -505,28 +523,92 @@ async function runInstallCommand(
   }
 
   if (installResult.ok) {
-    log(io, checkLine(`Skill installed to ${installResult.skillFile}`));
+    log(io, `   ${c.green('✓')} Skill installed to ${c.dim(installResult.skillFile)}`);
   } else {
-    log(io, failLine('Skill installation failed', installResult.error));
+    log(io, `   ${c.red('✗')} ${installResult.error ?? 'Installation failed'}`);
   }
-
-  log(io, '');
-  log(io, 'Checking environment...');
   log(io, '');
 
+  // Step 2: Detect Codex CLI
+  log(io, c.cyan('2. Checking Codex CLI...'));
+  const whichFn = (await import('./util/which.js')).which;
+  const codexPath = await whichFn(runtimeConfig.codexBin);
+  if (!codexPath) {
+    log(io, `   ${c.red('✗')} Codex CLI not found`);
+    log(io, `   ${c.dim('→ npm install -g @openai/codex')}`);
+  } else {
+    const { detectCodexCliInfo } = await import('./util/codex-cli-info.js');
+    const codexInfo = await detectCodexCliInfo({ codexBin: runtimeConfig.codexBin });
+    if (codexInfo.supportsExec) {
+      log(io, `   ${c.green('✓')} v${codexInfo.version ?? 'unknown'} (exec supported)`);
+    } else {
+      log(io, `   ${c.yellow('○')} v${codexInfo.version ?? 'unknown'} (exec not supported — update Codex)`);
+    }
+  }
+  log(io, '');
+
+  // Step 3: Test auth
+  log(io, c.cyan('3. Testing Codex auth...'));
   let doctorResult;
   try {
     doctorResult = await doctor({
       cwd,
       runtimeConfig,
       skillInstalled: installResult.ok,
+      packageVersion: getPackageVersion(),
     });
   } catch (error) {
-    log(io, failLine('Environment check failed', error instanceof Error ? error.message : String(error)));
+    log(io, `   ${c.red('✗')} ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
 
-  log(io, formatDoctorResult(doctorResult));
+  if (doctorResult.codexAuth?.ok) {
+    log(io, `   ${c.green('✓')} Authenticated`);
+  } else if (doctorResult.codexAuth) {
+    log(io, `   ${c.red('✗')} ${doctorResult.codexAuth.detail ?? 'Auth probe failed'}`);
+    log(io, `   ${c.dim('→ codex login')}`);
+  } else {
+    log(io, `   ${c.yellow('○')} Skipped (Codex not available)`);
+  }
+  log(io, '');
+
+  // Step 4: Check configuration
+  log(io, c.cyan('4. Checking configuration...'));
+  if (doctorResult.model) {
+    log(io, `   ${c.green('✓')} Model: ${doctorResult.model} (${doctorResult.modelSource})`);
+  } else {
+    log(io, `   ${c.dim('○')} Model: Codex default`);
+  }
+  if (doctorResult.codexConfig?.reasoningEffort) {
+    const effort = doctorResult.codexConfig.reasoningEffort;
+    if (effort.toLowerCase() === 'xhigh') {
+      log(io, `   ${c.yellow('⚠')} Reasoning effort: ${c.yellow(effort)} ${c.dim('(consider --reasoning-effort medium)')}`);
+    } else {
+      log(io, `   ${c.dim('○')} Reasoning effort: ${effort}`);
+    }
+  }
+  if (doctorResult.skillVersion && doctorResult.skillVersion !== getPackageVersion()) {
+    log(io, `   ${c.yellow('⚠')} Skill version ${doctorResult.skillVersion} differs from package ${getPackageVersion()}`);
+  }
+  if (doctorResult.linkedBinaryPath) {
+    log(io, `   ${c.green('✓')} Binary: ${c.dim(doctorResult.linkedBinaryPath)}`);
+  } else {
+    log(io, `   ${c.dim('○')} Binary: not in PATH ${c.dim('(use npx opinionate)')}`);
+  }
+  for (const warning of doctorResult.warnings ?? []) {
+    log(io, `   ${c.yellow('⚠')} ${warning}`);
+  }
+  log(io, '');
+
+  // Summary
+  if (doctorResult.ok) {
+    log(io, c.bold(c.green('All checks passed.')));
+  } else {
+    log(io, c.bold(c.red(`${doctorResult.issues.length} issue${doctorResult.issues.length !== 1 ? 's' : ''} found.`)));
+    for (const issue of doctorResult.issues) {
+      log(io, `   ${c.red('✗')} ${issue}`);
+    }
+  }
 
   if (installResult.ok && doctorResult.ok) {
     log(io, '');
@@ -585,8 +667,11 @@ async function runDeliberationCommand(
     return 1;
   }
 
-  const maxRounds = typeof args['max-rounds'] === 'string'
+  const rawMaxRounds = typeof args['max-rounds'] === 'string'
     ? Number.parseInt(args['max-rounds'], 10)
+    : DEFAULT_CONFIG.maxRounds;
+  const maxRounds = Number.isFinite(rawMaxRounds) && rawMaxRounds > 0
+    ? rawMaxRounds
     : DEFAULT_CONFIG.maxRounds;
   let context = buildContext(args, runtimeConfig, cwd, io, task);
   const trace = createTrace(runtimeConfig, cwd, io);
@@ -650,11 +735,25 @@ async function runDeliberationCommand(
   });
 
   reporter.emitHeader(peerAdapterName, runtimeConfig.model);
+
+  // Context summary
+  const inlineCount = context.files?.filter(f => typeof f.content === 'string').length ?? 0;
+  const referenceCount = (context.files?.length ?? 0) - inlineCount;
+  reporter.emitContextSummary({
+    fileCount: context.files?.length,
+    inlineCount,
+    referenceCount,
+    hasGitLog: !!context.gitLog,
+    hasResume: !!context.resumeMemory,
+    sessionId,
+  });
+
   if (existingSession) {
     reporter.emitSessionResumed(existingSession.id);
   }
 
   let currentRound = 0;
+  const heartbeatRegex = /^Round (\d+): waiting\.\.\. (\d+)s elapsed, (.+?) \/ (.+)$/;
   const deliberation = new Deliberation({
     maxRounds,
     timeout: runtimeConfig.timeout,
@@ -666,6 +765,22 @@ async function runDeliberationCommand(
     retryOnTimeout: runtimeConfig.retryOnTimeout,
     onVerbose: (message) => {
       trace.emitVerbose(message);
+      // Route heartbeat messages through the reporter for styled output
+      const hbMatch = message.match(heartbeatRegex);
+      if (hbMatch) {
+        const round = Number.parseInt(hbMatch[1]!, 10);
+        const elapsed = Number.parseInt(hbMatch[2]!, 10);
+        // Only show heartbeat after 30s to avoid noise
+        if (elapsed >= 30) {
+          const stdoutPart = hbMatch[3]!;
+          const stdoutBytes = stdoutPart.includes('KB')
+            ? Number.parseFloat(stdoutPart) * 1024
+            : 0;
+          const stderrBytes = Number.parseFloat(hbMatch[4]!) * 1024;
+          reporter.emitRoundWaiting(round, elapsed, stdoutBytes, stderrBytes);
+        }
+        return;
+      }
       reporter.emitDiagnostic(currentRound || 1, message);
     },
     onRoundStart: (round) => {

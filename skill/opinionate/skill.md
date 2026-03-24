@@ -1,45 +1,106 @@
 ---
 name: opinionate
-description: Invoke when facing complex planning decisions, architecture choices, debugging dead-ends, code review, or any task that would benefit from a second AI opinion. Triggers structured deliberation between Claude and a peer agent (Codex CLI by default). The user can also invoke manually with /opinionate.
+description: Run a structured multi-round deliberation between Claude and Codex. For plans/docs, Claude can iterate with Codex across persisted sessions; manual approval is the default, and automatic plan/doc updates are opt-in only.
 ---
 
 # Opinionate — Multi-Agent Deliberation
 
-This skill runs a structured deliberation session between you (Claude) and a peer AI agent
-(Codex CLI) to produce a better recommendation before acting.
+This skill uses `opinionate` to get a second opinion from Codex before acting.
 
-Project install path: `.claude/skills/opinionate/SKILL.md`
+For normal deliberation, Claude runs the CLI and presents the result.
+
+For **plans and docs**, Claude can also run a live multi-pass loop:
+
+- Codex reviews the current artifact
+- Claude interprets the findings
+- Claude either proposes edits for approval or applies plan/doc edits directly if the user explicitly authorized automatic mode
+- Claude continues the session for another round
+
+Source file in this repo: `skill/opinionate/skill.md`
+
+Installed project path: `.claude/skills/opinionate/SKILL.md`
 
 ## When to Use
 
-- **Planning**: Before implementing a feature with multiple possible approaches
-- **Review**: After writing code that touches critical paths
-- **Debug**: When stuck on a problem after initial investigation
-- **Decide**: When facing a technical decision with meaningful trade-offs
+- **Planning**: architecture plans, rollout plans, specs, docs
+- **Review**: a plan, PR approach, or design decision needs a second opinion
+- **Debug**: you are stuck and want another line of reasoning
+- **Decide**: you need to compare concrete options with trade-offs
 
-Use your judgment. Not every task needs deliberation — simple bug fixes and straightforward
-changes don't. But when stakes are high or the path is unclear, invoke this.
+Use your judgment. For simple tasks, skip it.
 
 ## Setup Check
 
-First make sure the project has been onboarded once:
+First make sure the project has been onboarded:
 
 ```bash
 opinionate install
 ```
 
-That command installs the skill and runs the environment checks. If the peer agent still does not run, execute:
+If the peer agent still does not run:
 
 ```bash
 opinionate doctor --cwd "<project working directory>"
 ```
 
-Use the doctor output before retrying the deliberation.
+Use the doctor output before retrying.
 
-## How to Run
+## Choose the Workflow
 
-Use Bash to invoke the `opinionate` CLI. Construct the command from the current
-conversation context:
+Decide between two workflows before running anything.
+
+### 1. Standard deliberation
+
+Use this for:
+
+- code review where you only want recommendation output
+- debugging and decisions that should not mutate files
+- cases where a single `run` is enough
+
+### 2. Live plan/doc deliberation
+
+Use this only when the primary artifact is an eligible plan/doc file:
+
+- `*.md`
+- `*.mdx`
+- `*.txt`
+- `docs/**`
+- `plans/**`
+- `specs/**`
+
+This workflow is **plans/docs only** in v2a.
+
+Do **not** use automatic editing for source code.
+
+## Interaction Modes For Live Plan/Doc Deliberation
+
+### Manual mode (default)
+
+Manual mode is the default.
+
+Claude may:
+
+- run one deliberation round
+- interpret Codex's findings
+- propose plan/doc edits
+
+Claude must **not** apply those edits until the user approves.
+
+### Automatic mode (opt-in only)
+
+Automatic mode is only allowed when the user explicitly authorizes it in the conversation, for example:
+
+- "Use automatic mode"
+- "Auto-apply the plan changes"
+- "Let opinionate update the plan between rounds"
+
+In automatic mode, Claude may apply edits between rounds, but only to eligible plan/doc files.
+
+Automatic mode must not be used for code in v2a.
+
+## Standard Deliberation
+
+Use Bash to invoke the CLI:
 
 ```bash
 opinionate run \
@@ -52,42 +113,135 @@ opinionate run \
   --max-rounds 5 \
   --timeout 60000 \
   --reasoning-effort medium \
+  --file-strategy auto \
   --verbose \
   --show-peer-command \
   --retry-on-timeout
 ```
 
-### Choosing the mode
+Parse the JSON result from stdout and present it to the user.
 
-- `plan` — You need to decide HOW to implement something
-- `review` — Code has been written and needs a second opinion
-- `debug` — You're stuck and need hypotheses
-- `decide` — There's a concrete choice to make (library, pattern, API design)
+## Live Plan/Doc Deliberation
 
-### Building context
+For the live loop, use **one round per CLI invocation**.
 
-- `--task`: A 1-2 sentence description of the deliberation topic
-- `--files`: Include files most relevant to the decision (the peer has no prior context)
-- `--file-strategy`: Leave this as `auto` in most cases. Large Markdown plans/specs/docs will be passed by path so Codex can read them from disk instead of bloating the initial prompt.
-- `--conversation-summary`: Summarize what the user wants and any constraints discussed
-- `--reasoning-effort`: Use `medium` when you need a responsive peer. Omit it only if there is a reason to inherit Codex's configured default.
-- `--git-log`: Include when recent changes are relevant to the discussion
-- `--verbose`: Show round lifecycle and peer execution metadata on stderr
-- `--trace-dir`: Persist per-round JSON artifacts when the user wants a durable trace
-- `--show-peer-command`: Print the exact Codex command line
-- `--show-peer-output`: Stream Codex stdout/stderr back to stderr when requested
-- `--retry-on-timeout`: Retry once with reduced file context if a round times out
-- `--persist-session`: Use on the first pass when you expect the user to revise a plan or code and come back for another review
+Each one-round live-loop invocation is treated as terminal for that CLI call, so the peer is expected to return a structured verdict:
 
-## Parsing the Result
-
-The CLI outputs a JSON `DeliberationResult` to stdout. Parse it and present to the user:
-
-If `result.sessionId` is present, keep it available for follow-up passes. That means the deliberation was started with `--persist-session` and can be resumed with `opinionate continue --session <id>`.
-
-### When agreed (agreed: true)
-
+```markdown
+**Verdict:** AGREE or DISAGREE
+**Decision:** ...
+**Details:** ...
 ```
+
+### Step 1: Start the session
+
+```bash
+opinionate run \
+  --mode <plan|review|decide> \
+  --task "<what should be reviewed or improved>" \
+  --cwd "<project working directory>" \
+  --files "<relevant plan/doc files>" \
+  --max-rounds 1 \
+  --persist-session \
+  --reasoning-effort medium \
+  --file-strategy auto \
+  --verbose \
+  --retry-on-timeout
+```
+
+### Step 2: Read the result
+
+Use these fields first:
+
+- `agreed`
+- `peerPosition`
+- `keyDisagreements`
+- `summary`
+- `sessionId`
+- `sessionMemory`
+
+The transcript is fallback context only. Do not rely on `transcript[-1]` as the primary contract.
+Treat `agreed` as the authoritative stop/go signal for the live loop.
+
+### Step 3: Decide what to do next
+
+If `agreed === true`:
+
+- stop the loop immediately
+- present the final state to the user
+- do not keep iterating just because the cap has not been reached
+
+The round cap is only a safety limit, not a target.
+
+If `agreed === false`:
+
+- derive the concrete plan/doc changes Claude wants to make
+- summarize what Codex is objecting to
+- decide whether to continue in manual mode or automatic mode
+
+### Step 4A: Manual mode behavior
+
+In manual mode, Claude should:
+
+1. summarize Codex's findings
+2. propose the exact plan/doc edits
+3. ask for approval before applying them
+
+Use copy like:
+
+```text
+Codex raised 3 issues. I have a concrete revision to the plan that addresses them.
+Apply those changes and continue the deliberation? [y/n]
+```
+
+If approved:
+
+- edit the plan/doc files
+- continue the session
+
+If declined:
+
+- stop and wait for user direction
+
+### Step 4B: Automatic mode behavior
+
+Only if the user explicitly enabled automatic mode:
+
+- apply the eligible plan/doc edits directly
+- summarize what changed
+- continue the session
+
+### Step 5: Continue the session
+
+```bash
+opinionate continue \
+  --session <sessionId> \
+  --mode <mode> \
+  --task "Addressed: <summary of changes>. Remaining: <open items>" \
+  --cwd "<project working directory>" \
+  --files "<updated plan/doc files>" \
+  --max-rounds 1 \
+  --reasoning-effort medium \
+  --file-strategy auto \
+  --verbose \
+  --retry-on-timeout
+```
+
+### Step 6: Stop conditions
+
+Stop when any of these are true:
+
+1. `agreed === true`
+2. 5 round-trips have been reached
+3. the user declines the edits in manual mode
+4. the user interrupts or redirects the task
+5. there is no meaningful next revision to make
+
+## Parsing and Presenting Results
+
+### When agreed
+
+```text
 ## Deliberation Complete ({rounds} rounds, agreed)
 
 ### Decision
@@ -96,15 +250,19 @@ If `result.sessionId` is present, keep it available for follow-up passes. That m
 ### Summary
 {result.summary}
 
-### Full Transcript
-{format each message in result.transcript}
-
-Approve this decision? [y/n/restart with guidance]
+### Peer Position
+{result.peerPosition}
 ```
 
-### When inconclusive (agreed: false)
+For live plan/doc deliberation, also describe:
 
-```
+- whether manual or automatic mode was used
+- what changed between rounds
+- which artifact version Codex ultimately agreed with
+
+### When inconclusive
+
+```text
 ## Deliberation Inconclusive ({rounds} rounds, no agreement)
 
 ### Recommended Path
@@ -115,49 +273,57 @@ Approve this decision? [y/n/restart with guidance]
 
 ### Key Disagreements
 {bullet list from result.keyDisagreements}
-
-### Full Transcript
-{format each message in result.transcript}
-
-How would you like to proceed? [accept recommendation / accept peer / restart with guidance]
 ```
 
-## Handling User Responses
+## Example: Manual Plan Loop
 
-- **Approve / Accept**: Proceed with the chosen approach
-- **Reject (n)**: Do not proceed, ask the user what they'd prefer
-- **Revise and re-review**:
-  - If there is already a `sessionId`, update the artifact and run `opinionate continue --session <id>`, passing the revised guidance in `--task`.
-  - If this is the first pass and more iterations are likely, restart with `opinionate run --persist-session`.
-- **Restart from scratch**: Only use a brand new `opinionate run` when the user wants a fresh deliberation with no session memory carried forward.
+```text
+User: "Review my pricing plan"
+
+Round 1:
+  Run `opinionate run ... --max-rounds 1 --persist-session`
+  Codex raises issues about trust boundary and decimals
+  Claude proposes updates to the plan
+  Claude asks: "Apply those changes and continue? [y/n]"
+
+Round 2:
+  After approval, Claude edits the plan
+  Run `opinionate continue --session <id> ... --max-rounds 1`
+  Codex reviews the revised plan
+
+Round 3:
+  Codex agrees
+  Claude stops immediately and presents the final revised plan
+```
+
+## Example: Automatic Plan Loop
+
+```text
+User: "Use automatic mode and keep iterating on the rollout plan"
+
+Round 1:
+  Claude runs one round
+  Codex raises issues
+  Claude updates the plan automatically
+
+Round 2:
+  Claude continues the session with the revised file
+  Codex reviews again
+
+Round 3:
+  Codex agrees
+  Claude stops and presents the final revised plan plus the change summary
+```
 
 ## Error Handling
 
-If the CLI exits with an error (e.g., Codex not installed, timeout), inform the user:
+If the CLI exits with an error:
 
-```
+```text
 Deliberation failed: {error message}
 Would you like to proceed without deliberation, or resolve the issue first?
 ```
 
 If the user asks what Codex actually did, rerun with `--verbose` and, when needed, `--trace-dir <path> --show-peer-command`.
 
-If deliberation is slow on a large plan or spec, prefer `--reasoning-effort medium` and keep the default `--file-strategy auto` so the peer can read large docs from disk instead of receiving them inline.
-
-For multi-pass plan work, prefer:
-
-```bash
-opinionate run \
-  --persist-session \
-  --mode plan \
-  --task "<initial review>" \
-  --cwd "<project working directory>" \
-  --files "<relevant plans/specs>"
-
-opinionate continue \
-  --session "<previous session id>" \
-  --mode plan \
-  --task "<what changed and what to reassess>" \
-  --cwd "<project working directory>" \
-  --files "<revised plans/specs>"
-```
+If the run is slow on a large plan or spec, prefer `--reasoning-effort medium` and keep `--file-strategy auto` so Codex reads large docs from disk instead of receiving them inline.

@@ -1,5 +1,5 @@
 export interface PeerDiagnostic {
-  type: 'mcp-failure' | 'mcp-starting' | 'model-info' | 'tool-execution' | 'response';
+  type: 'mcp-failure' | 'mcp-starting' | 'model-info' | 'tool-execution' | 'response' | 'usage-limit';
   severity: 'warning' | 'info';
   message: string;
 }
@@ -58,6 +58,14 @@ const PATTERNS: Array<{
       type: 'tool-execution',
       severity: 'info',
       message: 'peer executed tool',
+    }),
+  },
+  {
+    regex: /ERROR:.*(?:usage limit|rate limit|quota exceeded|purchase more credits)/i,
+    build: (match) => ({
+      type: 'usage-limit',
+      severity: 'warning',
+      message: `Codex usage limit reached: ${match[0]!.replace(/^ERROR:\s*/i, '').trim()}`,
     }),
   },
 ];
