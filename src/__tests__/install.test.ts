@@ -67,4 +67,11 @@ describe('installSkill', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain('Could not find skill.md');
   });
+
+  it('keeps install-skill pointed at the compiled cli entrypoint', () => {
+    const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'));
+
+    expect(packageJson.scripts?.['install-skill']).toBe('node dist/src/cli.js install');
+    expect(packageJson.scripts?.['install-skill']).not.toContain('dist/skill/');
+  });
 });

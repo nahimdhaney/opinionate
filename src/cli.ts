@@ -19,8 +19,10 @@ import {
   type DeliberationSession,
   type SessionTrackedFile,
 } from './core/session-store.js';
-import { checkLine, failLine, renderBox, detectColorSupport, createColors } from './util/format.js';
+import { checkLine, failLine, renderBox, renderColorHeader, detectColorSupport, createColors } from './util/format.js';
 import { TerminalReporter } from './util/terminal-reporter.js';
+import { detectLauncher, buildLauncherFromMode, formatRunExample, formatUpdateCommand, type LauncherInfo } from './util/launcher.js';
+import { loadUserConfig, saveUserConfig, type UserConfig } from './util/user-config.js';
 import { buildFileDelta, captureFileSnapshot } from './util/file-snapshot.js';
 import { getSessionSnapshotsDir } from './util/session-paths.js';
 import type { ExecutionTrace } from './core/execution-trace.js';
@@ -535,7 +537,7 @@ async function runDoctorCommand(
 }
 
 async function runInstallCommand(
-  _args: CliArgs,
+  args: CliArgs,
   runtimeConfig: RuntimeConfig,
   cwd: string,
   io: CliIO,
@@ -547,55 +549,41 @@ async function runInstallCommand(
   const doctor = dependencies.runDoctor ?? defaultRunDoctor;
 
   const c = createColors(detectColorSupport());
-  log(io, renderBox(`opinionate v${getPackageVersion()}`));
+  const isTTY = process.stderr.isTTY ?? false;
+  const isInteractive = isTTY && args.yes !== true && args['non-interactive'] !== true;
+  const shouldReconfigure = args.reconfigure === true;
+  const shouldSaveDefaults = args['save-defaults'] === true;
+
+  log(io, '');
+  log(io, renderColorHeader('opinionate', getPackageVersion(), c));
   log(io, '');
 
-  // Step 1: Install skill
-  log(io, c.cyan('1. Installing skill...'));
-  let installResult: InstallSkillResult;
-  try {
-    installResult = await install(cwd);
-  } catch (error) {
-    installResult = {
-      ok: false,
-      skillFile: resolve(cwd, '.claude', 'skills', 'opinionate', 'SKILL.md'),
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-
-  if (installResult.ok) {
-    log(io, `   ${c.green('✓')} Skill installed to ${c.dim(installResult.skillFile)}`);
-  } else {
-    log(io, `   ${c.red('✗')} ${installResult.error ?? 'Installation failed'}`);
-  }
-  log(io, '');
-
-  // Step 2: Detect Codex CLI
-  log(io, c.cyan('2. Checking Codex CLI...'));
+  // Step 1: Detect environment
+  log(io, c.cyan('1. Detecting environment...'));
   const whichFn = (await import('./util/which.js')).which;
   const codexPath = await whichFn(runtimeConfig.codexBin);
-  if (!codexPath) {
-    log(io, `   ${c.red('✗')} Codex CLI not found`);
-    log(io, `   ${c.dim('→ npm install -g @openai/codex')}`);
-  } else {
+  if (codexPath) {
     const { detectCodexCliInfo } = await import('./util/codex-cli-info.js');
     const codexInfo = await detectCodexCliInfo({ codexBin: runtimeConfig.codexBin });
     if (codexInfo.supportsExec) {
-      log(io, `   ${c.green('✓')} v${codexInfo.version ?? 'unknown'} (exec supported)`);
+      log(io, `   ${c.green('✓')} Codex CLI v${codexInfo.version ?? 'unknown'} (exec supported)`);
     } else {
-      log(io, `   ${c.yellow('○')} v${codexInfo.version ?? 'unknown'} (exec not supported — update Codex)`);
+      log(io, `   ${c.yellow('○')} Codex CLI v${codexInfo.version ?? 'unknown'} (exec not supported)`);
     }
+  } else {
+    log(io, `   ${c.red('✗')} Codex CLI not found`);
+    log(io, `   ${c.dim('→ npm install -g @openai/codex')}`);
   }
   log(io, '');
 
-  // Step 3: Test auth
-  log(io, c.cyan('3. Testing Codex auth...'));
+  // Step 2: Test auth
+  log(io, c.cyan('2. Testing Codex auth...'));
   let doctorResult;
   try {
     doctorResult = await doctor({
       cwd,
       runtimeConfig,
-      skillInstalled: installResult.ok,
+      skillInstalled: true, // will be set properly after install
       packageVersion: getPackageVersion(),
     });
   } catch (error) {
@@ -613,27 +601,89 @@ async function runInstallCommand(
   }
   log(io, '');
 
-  // Step 4: Check configuration
-  log(io, c.cyan('4. Checking configuration...'));
+  // Step 3: Interactive setup (TTY only)
+  let launcher: LauncherInfo = await detectLauncher();
+  let chosenEffort: string | undefined;
+  let userWantsToSave = shouldSaveDefaults;
+
+  if (isInteractive || shouldReconfigure) {
+    log(io, c.cyan('3. Setup preferences...'));
+    log(io, '');
+    try {
+      const { runInteractiveSetup } = await import('./util/install-prompts.js');
+      const setup = await runInteractiveSetup({
+        currentCodexEffort: doctorResult.codexConfig?.reasoningEffort,
+      });
+
+      if (!setup.cancelled) {
+        launcher = buildLauncherFromMode(setup.installMode);
+        chosenEffort = setup.reasoningEffort;
+        userWantsToSave = setup.shouldSave;
+      }
+    } catch {
+      // Prompts failed (e.g., stdin closed) — continue with defaults
+    }
+    log(io, '');
+  } else {
+    log(io, c.cyan('3. Using defaults...'));
+    if (doctorResult.codexConfig?.reasoningEffort?.toLowerCase() === 'xhigh') {
+      log(io, `   ${c.yellow('⚠')} Codex reasoning effort is ${c.yellow('xhigh')}`);
+      log(io, `   ${c.dim('  Tip: run with --reasoning-effort medium for faster responses')}`);
+    }
+    log(io, '');
+  }
+
+  // Step 4: Install skill
+  log(io, c.cyan('4. Installing skill...'));
+  let installResult: InstallSkillResult;
+  try {
+    installResult = await install(cwd);
+  } catch (error) {
+    installResult = {
+      ok: false,
+      skillFile: resolve(cwd, '.claude', 'skills', 'opinionate', 'SKILL.md'),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  if (installResult.ok) {
+    log(io, `   ${c.green('✓')} Skill installed to ${c.dim(installResult.skillFile)}`);
+  } else {
+    log(io, `   ${c.red('✗')} ${installResult.error ?? 'Installation failed'}`);
+  }
+
+  // Save user config if requested
+  if (userWantsToSave && chosenEffort) {
+    try {
+      const config: UserConfig = { version: 1, reasoningEffort: chosenEffort as any };
+      saveUserConfig(config);
+      log(io, `   ${c.green('✓')} Config saved to ${c.dim('~/.config/opinionate/config.json')}`);
+    } catch {
+      log(io, `   ${c.yellow('○')} Could not save config (non-critical)`);
+    }
+  }
+  log(io, '');
+
+  // Step 5: Configuration summary
+  log(io, c.cyan('5. Configuration...'));
   if (doctorResult.model) {
     log(io, `   ${c.green('✓')} Model: ${doctorResult.model} (${doctorResult.modelSource})`);
   } else {
     log(io, `   ${c.dim('○')} Model: Codex default`);
   }
-  if (doctorResult.codexConfig?.reasoningEffort) {
+  if (chosenEffort) {
+    log(io, `   ${c.green('✓')} Reasoning effort: ${chosenEffort}${userWantsToSave ? c.dim(' (saved)') : ''}`);
+  } else if (doctorResult.codexConfig?.reasoningEffort) {
     const effort = doctorResult.codexConfig.reasoningEffort;
     if (effort.toLowerCase() === 'xhigh') {
-      log(io, `   ${c.yellow('⚠')} Reasoning effort: ${c.yellow(effort)} ${c.dim('(consider --reasoning-effort medium)')}`);
+      log(io, `   ${c.yellow('⚠')} Reasoning effort: ${c.yellow(effort)}`);
     } else {
       log(io, `   ${c.dim('○')} Reasoning effort: ${effort}`);
     }
   }
-  if (doctorResult.skillVersion && doctorResult.skillVersion !== getPackageVersion()) {
-    log(io, `   ${c.yellow('⚠')} Skill version ${doctorResult.skillVersion} differs from package ${getPackageVersion()}`);
-  }
   if (doctorResult.linkedBinaryPath) {
     log(io, `   ${c.green('✓')} Binary: ${c.dim(doctorResult.linkedBinaryPath)}`);
-  } else {
+  } else if (launcher.mode !== 'npx') {
     log(io, `   ${c.dim('○')} Binary: not in PATH ${c.dim('(use npx opinionate)')}`);
   }
   for (const warning of doctorResult.warnings ?? []) {
@@ -642,7 +692,7 @@ async function runInstallCommand(
   log(io, '');
 
   // Summary
-  if (doctorResult.ok) {
+  if (doctorResult.ok && installResult.ok) {
     log(io, c.bold(c.green('All checks passed.')));
   } else {
     log(io, c.bold(c.red(`${doctorResult.issues.length} issue${doctorResult.issues.length !== 1 ? 's' : ''} found.`)));
@@ -658,10 +708,10 @@ async function runInstallCommand(
     log(io, '  2. Type /opinionate to invoke manually, or Claude will auto-trigger it');
     log(io, '');
     log(io, c.bold('Try it now:'));
-    log(io, c.dim('  opinionate run --mode plan --task "hello world" --verbose'));
+    log(io, c.dim(`  ${formatRunExample(launcher)}`));
     log(io, '');
     log(io, c.bold('Update later:'));
-    log(io, c.dim('  npm install -g opinionate@latest && opinionate install'));
+    log(io, c.dim(`  ${formatUpdateCommand(launcher)}`));
     return 0;
   }
 
@@ -866,9 +916,11 @@ export async function runCli(
 ): Promise<number> {
   const io = dependencies.io ?? createDefaultIO();
   const args = parseArgs(argv);
+  const userConfig = loadUserConfig();
   const runtimeConfig = resolveRuntimeConfig({
     argv: args,
     env: dependencies.env ?? process.env,
+    userConfig,
   });
 
   const baseCwd = typeof args.cwd === 'string'

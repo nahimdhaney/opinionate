@@ -1,6 +1,6 @@
 {
   "name": "opinionate",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Structured peer deliberation and Codex-backed second opinions for AI coding tools.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -25,8 +25,9 @@
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:packaging": "node scripts/check-package-artifact.mjs",
     "install-skill": "node dist/src/cli.js install",
-    "prepublishOnly": "pnpm build && pnpm test"
+    "prepublishOnly": "pnpm build && pnpm test && pnpm run test:packaging"
   },
   "keywords": [
     "ai",
@@ -42,9 +43,9 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0",
-    "@types/node": "^22.0.0"
+    "vitest": "^3.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -52,5 +53,8 @@
   "files": [
     "dist",
     "skill"
-  ]
+  ],
+  "dependencies": {
+    "@clack/prompts": "^1.1.0"
+  }
 }

@@ -53,7 +53,7 @@ function envWithFallback(
   return undefined;
 }
 
-export function resolveRuntimeConfig(input: ResolveRuntimeConfigInput): RuntimeConfig {
+export function resolveRuntimeConfig(input: ResolveRuntimeConfigInput & { userConfig?: { reasoningEffort?: string } }): RuntimeConfig {
   const env = input.env ?? {};
   const cliModel = typeof input.argv.model === 'string' ? input.argv.model : undefined;
   const envModel = envWithFallback(env, 'OPINIONATE_MODEL', 'AGENT_DELIBERATE_MODEL');
@@ -87,7 +87,11 @@ export function resolveRuntimeConfig(input: ResolveRuntimeConfigInput): RuntimeC
   return {
     model,
     modelSource: cliModel ? 'cli' : envModel ? 'env' : 'codex-default',
-    reasoningEffort: cliReasoningEffort ?? envReasoningEffort,
+    reasoningEffort: cliReasoningEffort ?? envReasoningEffort ?? (
+      input.userConfig?.reasoningEffort && VALID_REASONING_EFFORTS.has(input.userConfig.reasoningEffort)
+        ? input.userConfig.reasoningEffort as ReasoningEffort
+        : undefined
+    ),
     timeout: parseNumber(input.argv.timeout, parseNumber(envWithFallback(env, 'OPINIONATE_TIMEOUT', 'AGENT_DELIBERATE_TIMEOUT'), 60_000)),
     contextBudget: parseNumber(
       input.argv['context-budget'],

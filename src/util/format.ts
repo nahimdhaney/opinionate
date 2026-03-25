@@ -51,6 +51,10 @@ export function renderBox(title: string): string {
   return `╭${border}╮\n│${content}│\n╰${border}╯`;
 }
 
+export function renderColorHeader(name: string, version: string, colors: Colors): string {
+  return `  ${colors.bold(colors.cyan(name))}  ${colors.dim(`v${version}`)}`;
+}
+
 export function checkLine(text: string): string {
   return `  ✓ ${text}`;
 }

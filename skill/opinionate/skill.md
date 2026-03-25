@@ -145,7 +145,26 @@ opinionate run \
   --retry-on-timeout
 ```
 
-Parse the JSON result from stdout and present it to the user.
+Parse the JSON result from stdout and present it to the user using the formatting rules below.
+
+## Announcing the Deliberation
+
+Before running the CLI, tell the user what you're doing. Use a clear, styled announcement:
+
+```text
+---
+
+**Getting a second opinion from Codex...**
+
+> Mode: {mode}
+> Task: {brief task description}
+> Files: {count} files
+> Rounds: up to {maxRounds}
+
+---
+```
+
+Keep it brief. The user should know what's happening without reading the raw command. Do NOT show the raw `opinionate run ...` command unless the user asks for it or `--verbose` is relevant.
 
 ## Live Plan/Doc Deliberation
 
@@ -265,19 +284,26 @@ Stop when any of these are true:
 
 ## Parsing and Presenting Results
 
+Always present results in a clean, well-structured format with clear visual separation. Never dump raw JSON to the user.
+
 ### When agreed
 
 ```text
-## Deliberation Complete ({rounds} rounds, agreed)
+---
 
-### Decision
+**Deliberation complete** — agreed in {rounds} round(s)
+
+**Decision**
 {result.decision}
 
-### Summary
+**Summary**
 {result.summary}
 
-### Peer Position
-{result.peerPosition}
+> **Codex's position:** {result.peerPosition}
+
+---
+
+Approve this direction? I can proceed with implementation, or we can adjust.
 ```
 
 For live plan/doc deliberation, also describe:
@@ -289,17 +315,35 @@ For live plan/doc deliberation, also describe:
 ### When inconclusive
 
 ```text
-## Deliberation Inconclusive ({rounds} rounds, no agreement)
+---
 
-### Recommended Path
+**Deliberation inconclusive** — {rounds} round(s), no agreement
+
+**Recommended path**
 {result.recommendedPath}
 
-### Peer Position
-{result.peerPosition}
+> **Codex's position:** {result.peerPosition}
 
-### Key Disagreements
+**Key disagreements**
 {bullet list from result.keyDisagreements}
+
+---
+
+How would you like to proceed?
+- Accept the recommended path
+- Accept Codex's position
+- Provide guidance and I'll run another round
 ```
+
+### Formatting rules
+
+1. **Use horizontal rules** (`---`) to visually separate the deliberation block from the rest of the conversation
+2. **Bold the section headers** — Decision, Summary, Recommended path, etc.
+3. **Use blockquotes** (`>`) for Codex's position to visually distinguish the peer's voice from the summary
+4. **Keep it scannable** — short paragraphs, bullet points for disagreements, no walls of text
+5. **End with a clear action prompt** — the user should know exactly what their options are
+6. **Never show raw JSON** — always parse and format the result fields
+7. **If `sessionId` is present**, mention it subtly so the user knows the session can be continued: `Session: {sessionId}`
 
 ## Example: Manual Plan Loop
 
