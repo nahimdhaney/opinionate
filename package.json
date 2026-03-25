@@ -1,6 +1,6 @@
 {
   "name": "opinionate",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Structured peer deliberation and Codex-backed second opinions for AI coding tools.",
   "type": "module",
   "main": "dist/src/index.js",
