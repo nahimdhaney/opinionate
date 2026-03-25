@@ -14,6 +14,10 @@
 
 Opinionate gets a **second opinion from Codex** before you commit to a plan, review, or architecture decision. It runs structured multi-round deliberations between Claude and Codex, then presents the agreed recommendation — or the disagreements — for your approval.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nahimdhaney/opinionate/main/assets/demo.gif" alt="opinionate demo" width="800" />
+</p>
+
 ## 30-Second Setup
 
 ```bash
@@ -31,7 +35,7 @@ That's it. Restart Claude Code and you're ready.
 
 ```
 ╭─────────────────────╮
-│  opinionate v0.1.0  │
+│  opinionate v0.2.0  │
 ╰─────────────────────╯
 
 1. Detecting environment...
@@ -67,15 +71,40 @@ All checks passed.
 3. They go back and forth until they agree (or hit the round limit)
 4. You get the recommendation and decide what to do
 
-## Use With Claude Code
+## Use With Claude Code (Primary Experience)
 
-After `opinionate install`, Claude uses it automatically for complex decisions. Or trigger it manually:
+After `opinionate install`, Claude uses it **automatically** for complex decisions. You don't need to do anything — when Claude faces architecture trade-offs, deep reviews, or ambiguous judgment calls, it invokes opinionate behind the scenes and presents you with a clean result:
 
 ```
-/opinionate
+───────────────────────────────────────────────────────
+
+  Getting a second opinion from Codex...
+
+  > Mode: plan
+  > Task: Design the authentication system
+  > Files: 3 files
+  > Rounds: up to 5
+
+───────────────────────────────────────────────────────
+
+  Deliberation complete — agreed in 2 rounds
+
+  Decision
+  Use JWT with refresh token rotation and a 15-minute
+  access token TTL. Store refresh tokens server-side.
+
+  > Codex's position: The token rotation approach is
+  > correct. Stateless access + stateful refresh is
+  > the right trade-off for this API.
+
+  Approve this direction? [y/n/adjust]
+
+───────────────────────────────────────────────────────
 ```
 
-Good for: architecture trade-offs, multi-file changes, deep reviews, debugging dead-ends, ambiguous judgment calls.
+You can also trigger it manually with `/opinionate`.
+
+**Good for:** architecture trade-offs, multi-file changes, deep reviews, debugging dead-ends, ambiguous judgment calls.
 
 ## Use As a CLI
 

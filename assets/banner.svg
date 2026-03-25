@@ -50,7 +50,7 @@
   <!-- Background -->
   <rect width="800" height="280" rx="16" fill="url(#bg)" />
 
-  <!-- Subtle grid pattern -->
+  <!-- Subtle grid -->
   <g opacity="0.03">
     <line x1="0" y1="40" x2="800" y2="40" stroke="#fff" stroke-width="0.5" />
     <line x1="0" y1="80" x2="800" y2="80" stroke="#fff" stroke-width="0.5" />
@@ -103,16 +103,18 @@
   </circle>
 
   <!-- Center terminal window -->
-  <g transform="translate(310, 42)">
-    <rect x="0" y="0" width="180" height="70" rx="8" fill="#0f0f23" stroke="#1e1b4b" stroke-width="1.5" />
+  <g transform="translate(290, 38)">
+    <rect x="0" y="0" width="220" height="80" rx="8" fill="#0f0f23" stroke="#1e1b4b" stroke-width="1.5" />
     <!-- Window dots -->
     <circle cx="14" cy="12" r="3.5" fill="#ef4444" opacity="0.8" />
     <circle cx="26" cy="12" r="3.5" fill="#eab308" opacity="0.8" />
     <circle cx="38" cy="12" r="3.5" fill="#22c55e" opacity="0.8" />
-    <!-- Terminal text -->
-    <text x="14" y="34" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', monospace" font-size="10" fill="#94a3b8">$ opinionate run</text>
-    <text x="14" y="48" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', monospace" font-size="9" fill="#a78bfa">◐ Round 1/3...</text>
-    <text x="14" y="62" font-family="'SF Mono', 'Fira Code', 'JetBrains Mono', monospace" font-size="9" fill="#4ade80">✓ agreed (2 rounds, 84s)</text>
+    <!-- Terminal text — install flow -->
+    <text x="14" y="32" font-family="'SF Mono', 'Fira Code', monospace" font-size="9" fill="#94a3b8">$ opinionate install</text>
+    <text x="14" y="46" font-family="'SF Mono', 'Fira Code', monospace" font-size="8.5" fill="#22d3ee">  opinionate</text>
+    <text x="84" y="46" font-family="'SF Mono', 'Fira Code', monospace" font-size="8.5" fill="#475569">v0.2.0</text>
+    <text x="14" y="58" font-family="'SF Mono', 'Fira Code', monospace" font-size="8.5" fill="#4ade80">  ✓ Codex authenticated</text>
+    <text x="14" y="70" font-family="'SF Mono', 'Fira Code', monospace" font-size="8.5" fill="#4ade80">  ✓ All checks passed</text>
   </g>
 
   <!-- Title -->
@@ -124,7 +126,7 @@
   <!-- Version badge -->
   <g transform="translate(400, 238)">
     <rect x="-28" y="0" width="56" height="18" rx="9" fill="#1e1b4b" stroke="#7c3aed" stroke-width="0.5" opacity="0.6" />
-    <text x="0" y="13" font-family="'SF Mono', monospace" font-size="9" fill="#a78bfa" text-anchor="middle" font-weight="500">v0.1.0</text>
+    <text x="0" y="13" font-family="'SF Mono', monospace" font-size="9" fill="#a78bfa" text-anchor="middle" font-weight="500">v0.2.0</text>
   </g>
 
   <!-- Bottom tagline -->

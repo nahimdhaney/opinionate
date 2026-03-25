@@ -19,7 +19,7 @@ import {
   type DeliberationSession,
   type SessionTrackedFile,
 } from './core/session-store.js';
-import { checkLine, failLine, renderBox, renderColorHeader, detectColorSupport, createColors } from './util/format.js';
+import { failLine, renderColorHeader, detectColorSupport, createColors } from './util/format.js';
 import { TerminalReporter } from './util/terminal-reporter.js';
 import { detectLauncher, buildLauncherFromMode, formatRunExample, formatUpdateCommand, type LauncherInfo } from './util/launcher.js';
 import { loadUserConfig, saveUserConfig, type UserConfig } from './util/user-config.js';
@@ -576,8 +576,8 @@ async function runInstallCommand(
   }
   log(io, '');
 
-  // Step 2: Test auth
-  log(io, c.cyan('2. Testing Codex auth...'));
+  // Step 2: Check auth
+  log(io, c.cyan('2. Checking Codex auth...'));
   let doctorResult;
   try {
     doctorResult = await doctor({

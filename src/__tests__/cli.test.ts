@@ -229,7 +229,7 @@ describe('runCli', () => {
     expect(exitCode).toBe(0);
     expect(output.stderr()).toContain('opinionate');
     expect(output.stderr()).toContain('Detecting environment...');
-    expect(output.stderr()).toContain('Testing Codex auth...');
+    expect(output.stderr()).toContain('Checking Codex auth...');
     expect(output.stderr()).toContain('Installing skill...');
     expect(output.stderr()).toContain('✓ Skill installed to');
     expect(output.stderr()).toContain('All checks passed.');
