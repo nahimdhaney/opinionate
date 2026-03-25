@@ -75,6 +75,16 @@ After installing, restart Claude Code in your project. Claude will invoke opinio
 /opinionate
 ```
 
+Automatic invocation is the default for complex work, not just explicit slash-command usage. Good trigger cases include:
+
+- architecture or rollout trade-offs
+- multi-file or cross-module changes
+- deep reviews where correctness matters
+- debugging dead-ends or conflicting hypotheses
+- ambiguous tasks where the agent is making a meaningful judgment call
+
+If the task is simple or mechanical, Claude should skip opinionate. If you want to force deliberation anyway, use `/opinionate`.
+
 For plans and specs, opinionate can also run as a **live multi-pass loop**:
 
 - **manual mode** is the default: Claude proposes plan/doc edits, waits for approval, then continues the session

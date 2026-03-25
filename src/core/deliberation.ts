@@ -106,11 +106,14 @@ export class Deliberation {
         let peerResponse: string;
         let roundTimeout = this.config.timeout;
         let retried = false;
+        let attempt = 1;
         try {
           while (true) {
             try {
               const raw = await peerAdapter.sendMessage(payload, roundContext, {
                 timeoutMs: roundTimeout,
+                logicalRound: round,
+                attempt,
               });
               const isPartial = typeof raw === 'object' && raw.partial;
               const extracted = extractSessionMemoryFromContent(
@@ -137,6 +140,7 @@ export class Deliberation {
               ) {
                 retried = true;
                 roundTimeout = Math.round(roundTimeout * 1.5);
+                attempt += 1;
                 roundContext = { ...context, fileStrategy: 'reference' };
                 payload = this.contextBuilder.buildPromptPayload(
                   orchestratorPrompt,

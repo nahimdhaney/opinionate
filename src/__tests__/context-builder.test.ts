@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { afterEach, describe, it, expect } from 'vitest';
 import { ContextBuilder } from '../core/context-builder.js';
 import type { DeliberationContext, DeliberationMessage, FileContext } from '../core/types.js';
 
@@ -11,6 +14,14 @@ function makeMessage(
 }
 
 describe('ContextBuilder', () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('builds a prompt payload with all context sections', () => {
     const builder = new ContextBuilder(50_000, '/tmp/test');
     const context: DeliberationContext = {
@@ -85,6 +96,22 @@ describe('ContextBuilder', () => {
     const filtered = builder.filterFiles(files);
     expect(filtered).toHaveLength(1);
     expect(filtered[0]!.path).toBe('src/app.ts');
+  });
+
+  it('filters relative paths against project ignore rules', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'opinionate-context-builder-'));
+    tempDirs.push(cwd);
+    writeFileSync(join(cwd, '.opinionateignore'), 'docs/plans/plan.md\n', 'utf8');
+
+    const builder = new ContextBuilder(50_000, cwd);
+    const files: FileContext[] = [
+      { path: 'docs/plans/plan.md', content: '# plan' },
+      { path: 'src/app.ts', content: 'export const app = true;\n' },
+    ];
+
+    const filtered = builder.filterFiles(files);
+
+    expect(filtered).toEqual([{ path: 'src/app.ts', content: 'export const app = true;\n' }]);
   });
 
   it('summarizes transcript when it exceeds budget', () => {

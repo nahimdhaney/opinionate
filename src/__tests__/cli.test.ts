@@ -442,6 +442,91 @@ describe('runCli', () => {
     expect(capturedPrompt).toContain('+Line 1 updated');
   });
 
+  it('emits removed deltas for files dropped from a continued session', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'opinionate-cli-session-removed-'));
+    tempDirs.push(cwd);
+    writeFileSync(join(cwd, 'plan-a.md'), 'Line 1\nLine 2\n');
+    writeFileSync(join(cwd, 'plan-b.md'), 'Replacement plan\n');
+
+    let capturedPrompt = '';
+    const resolveAdapter = () => ({
+      name: 'mock',
+      initialize: vi.fn().mockResolvedValue(undefined),
+      isAvailable: vi.fn().mockResolvedValue(true),
+      cleanup: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn().mockImplementation(async (prompt: string) => {
+        capturedPrompt = prompt;
+        return [
+          '**Verdict:** AGREE',
+          '**Decision:** Session delta looks good.',
+          '<opinionate-session-memory>',
+          JSON.stringify({
+            acceptedDecisions: ['Track session file changes'],
+            rejectedIdeas: [],
+            openQuestions: [],
+            latestRecommendation: 'Session delta looks good.',
+            latestPeerPosition: 'Session delta looks good.',
+          }),
+          '</opinionate-session-memory>',
+        ].join('\n');
+      }),
+    });
+
+    const first = createMemoryIO();
+    const firstExit = await runCli(
+      [
+        'node',
+        'opinionate',
+        'run',
+        '--persist-session',
+        '--mode',
+        'plan',
+        '--task',
+        'Review plan A',
+        '--files',
+        'plan-a.md',
+      ],
+      {
+        io: first.io,
+        env: {},
+        cwd: () => cwd,
+        resolveAdapter,
+      },
+    );
+
+    expect(firstExit).toBe(0);
+    const firstJson = JSON.parse(first.stdout());
+
+    const second = createMemoryIO();
+    const secondExit = await runCli(
+      [
+        'node',
+        'opinionate',
+        'continue',
+        '--session',
+        firstJson.sessionId,
+        '--mode',
+        'plan',
+        '--task',
+        'Review replacement plan',
+        '--files',
+        'plan-b.md',
+      ],
+      {
+        io: second.io,
+        env: {},
+        cwd: () => cwd,
+        resolveAdapter,
+      },
+    );
+
+    expect(secondExit).toBe(0);
+    expect(capturedPrompt).toContain('## Changes Since Last Review');
+    expect(capturedPrompt).toContain('plan-a.md');
+    expect(capturedPrompt).toContain('file removed from session; prior content should not be assumed current');
+    expect(capturedPrompt).toContain('plan-b.md');
+  });
+
   it('supports one-round persisted plan loops and stops as soon as a later round agrees', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'opinionate-cli-live-loop-'));
     tempDirs.push(cwd);

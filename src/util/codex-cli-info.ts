@@ -49,7 +49,7 @@ export interface ProbeCodexAuthInput {
 
 export interface CodexAuthStatus {
   ok: boolean;
-  reason?: 'not_authenticated' | 'model_unavailable' | 'exec_failed';
+  reason?: 'not_authenticated' | 'model_unavailable' | 'timed_out' | 'exec_failed';
   detail?: string;
   stdout?: string;
   stderr?: string;
@@ -69,8 +69,14 @@ export const defaultRunCapture: RunCapture = (command, args, options = {}) =>
       },
       (error, stdout, stderr) => {
         if (error) {
+          const timeoutDetail =
+            options.timeoutMs !== undefined &&
+            ((error as NodeJS.ErrnoException & { killed?: boolean; signal?: string }).killed ||
+              /timed out|ETIMEDOUT/i.test(error.message))
+              ? `process timed out after ${options.timeoutMs}ms`
+              : null;
           const parts = [
-            error.message,
+            timeoutDetail ?? error.message,
             stdout?.trim() ? `stdout: ${stdout.trim()}` : '',
             stderr?.trim() ? `stderr: ${stderr.trim()}` : '',
           ].filter(Boolean);
@@ -170,7 +176,7 @@ export async function probeCodexAuth(input: ProbeCodexAuthInput): Promise<CodexA
     );
     const result = await runCapture(input.codexBin, args, {
       cwd: input.cwd,
-      timeoutMs: input.timeoutMs ?? 10_000,
+      timeoutMs: input.timeoutMs ?? 20_000,
     });
     return {
       ok: true,
@@ -188,6 +194,9 @@ export async function probeCodexAuth(input: ProbeCodexAuthInput): Promise<CodexA
       )
     ) {
       return { ok: false, reason: 'model_unavailable', detail };
+    }
+    if (/timed out|ETIMEDOUT|MCP startup|waiting for MCP/i.test(detail)) {
+      return { ok: false, reason: 'timed_out', detail };
     }
     return { ok: false, reason: 'exec_failed', detail };
   }

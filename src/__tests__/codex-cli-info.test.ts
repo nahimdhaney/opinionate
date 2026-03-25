@@ -140,4 +140,26 @@ describe('probeCodexAuth', () => {
     expect(auth.ok).toBe(true);
     expect(auth.stderr).toContain('lifi failed');
   });
+
+  it('reports slow startup timeouts separately from auth failures', async () => {
+    const auth = await probeCodexAuth({
+      codexBin: 'codex',
+      cwd: '/tmp/project',
+      codexInfo: {
+        version: '0.116.0',
+        rawVersion: 'codex-cli 0.116.0',
+        supportsExec: true,
+        supportsModelFlag: true,
+        supportsConfigFlag: true,
+      },
+      runText: fakeRunText({}, {
+        'codex exec Return the word ok and nothing else.':
+          'Command failed: process timed out after 10000ms while waiting for MCP startup.',
+      }),
+    });
+
+    expect(auth.ok).toBe(false);
+    expect(auth.reason).toBe('timed_out');
+    expect(auth.detail).toContain('timed out');
+  });
 });

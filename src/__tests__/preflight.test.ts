@@ -134,4 +134,41 @@ describe('runDoctor', () => {
     );
     expect(formatDoctorResult(result)).toContain('Codex reasoning effort: xhigh');
   });
+
+  it('reports slow codex startup separately from authentication failures', async () => {
+    const result = await runDoctor({
+      cwd: '/tmp/project',
+      runtimeConfig: {
+        model: undefined,
+        modelSource: 'codex-default',
+        timeout: 60000,
+        contextBudget: 50000,
+        codexBin: 'codex',
+        verbose: false,
+        showPeerCommand: false,
+        showPeerOutput: false,
+        fileStrategy: 'auto',
+        retryOnTimeout: false,
+      },
+      codexInfo: {
+        version: '0.116.0',
+        rawVersion: 'codex-cli 0.116.0',
+        supportsExec: true,
+        supportsModelFlag: true,
+        supportsConfigFlag: true,
+      },
+      codexAuth: {
+        ok: false,
+        reason: 'timed_out',
+        detail: 'Command failed: process timed out after 20000ms while waiting for MCP startup.',
+      },
+      skillInstalled: true,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([expect.stringContaining('slow to start')]),
+    );
+    expect(formatDoctorResult(result)).toContain('Codex exec probe: timed out');
+  });
 });

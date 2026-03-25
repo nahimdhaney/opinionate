@@ -1,11 +1,13 @@
 ---
 name: opinionate
-description: Run a structured multi-round deliberation between Claude and Codex. For plans/docs, Claude can iterate with Codex across persisted sessions; manual approval is the default, and automatic plan/doc updates are opt-in only.
+description: Use automatically when a task is complex enough to benefit from a second opinion: architecture trade-offs, multi-file changes, deep reviews, debugging dead-ends, or decision-heavy work. For plans/docs, Claude can iterate with Codex across persisted sessions; manual approval is the default, and automatic plan/doc updates are opt-in only.
 ---
 
 # Opinionate — Multi-Agent Deliberation
 
 This skill uses `opinionate` to get a second opinion from Codex before acting.
+
+Claude should invoke it automatically for sufficiently complex tasks. Do not wait for the user to type `/opinionate` when the task clearly benefits from Codex's view.
 
 For normal deliberation, Claude runs the CLI and presents the result.
 
@@ -23,11 +25,34 @@ Installed project path: `.claude/skills/opinionate/SKILL.md`
 ## When to Use
 
 - **Planning**: architecture plans, rollout plans, specs, docs
-- **Review**: a plan, PR approach, or design decision needs a second opinion
-- **Debug**: you are stuck and want another line of reasoning
+- **Review**: a plan, PR approach, tricky implementation, or design decision needs a second opinion
+- **Debug**: you are stuck, have conflicting hypotheses, or want another line of reasoning
 - **Decide**: you need to compare concrete options with trade-offs
+- **Complex delivery work**: multi-file changes, risky behavior changes, unclear requirements, or tasks where a single-agent answer is likely to miss an important angle
 
 Use your judgment. For simple tasks, skip it.
+
+## Default Trigger Rule
+
+Invoke opinionate automatically when the task is complex enough that Codex's view is likely to improve the result.
+
+Strong signals:
+
+- architecture or rollout trade-offs
+- multi-file or cross-module changes
+- non-trivial reviews where correctness matters
+- debugging dead-ends or conflicting hypotheses
+- ambiguous tasks where Claude is making a meaningful judgment call
+- work the user explicitly asks to make thorough, careful, or decision-grade
+
+Default behavior:
+
+- if the task is clearly complex, invoke opinionate without asking for permission first
+- briefly tell the user you are bringing in Codex as part of the workflow
+- if the task is simple or mechanical, do not invoke it
+- if the user explicitly says not to use opinionate or not to consult Codex, do not invoke it
+
+The slash command `/opinionate` is still the explicit override when the user wants to force deliberation.
 
 ## Setup Check
 
@@ -53,6 +78,7 @@ Decide between two workflows before running anything.
 
 Use this for:
 
+- complex tasks in any mode where a second opinion is worthwhile
 - code review where you only want recommendation output
 - debugging and decisions that should not mutate files
 - cases where a single `run` is enough

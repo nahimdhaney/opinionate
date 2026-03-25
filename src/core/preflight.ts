@@ -97,6 +97,13 @@ export async function runDoctor(input: RunDoctorInput): Promise<DoctorResult> {
   if (codexAuth && !codexAuth.ok) {
     if (codexAuth.reason === 'not_authenticated') {
       issues.push('Codex is installed but not authenticated. Run `codex login` and retry.');
+    } else if (codexAuth.reason === 'timed_out') {
+      issues.push(
+        `Codex is installed but slow to start. The exec probe timed out before Codex responded. ${codexAuth.detail ?? ''}`.trim(),
+      );
+      suggestions.push(
+        'Slow startup is often caused by MCP initialization or heavy Codex defaults. Try `--reasoning-effort medium` and temporarily disable slow MCP servers before rerunning `opinionate doctor`.',
+      );
     } else if (codexAuth.reason === 'model_unavailable') {
       issues.push(
         `The configured model is not available to the current Codex account. ${codexAuth.detail ?? ''}`.trim(),
@@ -203,6 +210,13 @@ export function formatDoctorResult(result: DoctorResult): string {
         failLine(
           'Codex auth: authenticated but model unavailable',
           'Choose a supported model or remove the override',
+        ),
+      );
+    } else if (result.codexAuth?.ok === false && result.codexAuth.reason === 'timed_out') {
+      lines.push(
+        failLine(
+          'Codex exec probe: timed out',
+          'Codex may be slow to start because of MCP initialization or heavy defaults; try `--reasoning-effort medium` and rerun',
         ),
       );
     } else if (result.codexAuth?.ok === false && result.codexAuth.reason === 'exec_failed') {

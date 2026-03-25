@@ -114,8 +114,10 @@ export class CodexCliAdapter implements Adapter {
     this.cliInfo = cliInfo;
 
     const args = buildCodexExecArgs(prompt, cliInfo, this.model, this.reasoningEffort);
-    const round = ++this.roundCounter;
+    const round = options.logicalRound ?? ++this.roundCounter;
+    const attempt = options.attempt ?? 1;
     const timeoutMs = options.timeoutMs ?? this.timeout;
+    const roundLabel = attempt > 1 ? `Round ${round} attempt ${attempt}` : `Round ${round}`;
 
     return new Promise<string | AdapterResponse>((resolve, reject) => {
       const startedAt = Date.now();
@@ -135,6 +137,7 @@ export class CodexCliAdapter implements Adapter {
 
       this.trace?.onRoundStart({
         round,
+        attempt,
         command: [this.codexBin, ...args],
         model: this.model,
         modelSource: this.modelSource,
@@ -145,7 +148,7 @@ export class CodexCliAdapter implements Adapter {
 
       const heartbeat = setInterval(() => {
         this.trace?.emitVerbose(
-          `Round ${round}: waiting... ${Math.round((Date.now() - startedAt) / 1000)}s elapsed, ${
+          `${roundLabel}: waiting... ${Math.round((Date.now() - startedAt) / 1000)}s elapsed, ${
             stdout.trim().length > 0
               ? `${(Buffer.byteLength(stdout, 'utf-8') / 1024).toFixed(1)}KB stdout`
               : 'no output yet'
@@ -173,7 +176,7 @@ export class CodexCliAdapter implements Adapter {
         }
         timedOut = true;
         this.trace?.emitVerbose(
-          `Round ${round}: timeout reached after ${timeoutMs}ms, waiting up to 5000ms for peer shutdown`,
+          `${roundLabel}: timeout reached after ${timeoutMs}ms, waiting up to 5000ms for peer shutdown`,
         );
         child.kill('SIGINT');
         forceKillTimer = setTimeout(() => {
@@ -184,13 +187,13 @@ export class CodexCliAdapter implements Adapter {
       child.stdout.on('data', (data: Buffer | string) => {
         const chunk = data.toString();
         stdout += chunk;
-        this.trace?.onPeerStdout(round, chunk);
+        this.trace?.onPeerStdout(round, chunk, attempt);
       });
 
       child.stderr.on('data', (data: Buffer | string) => {
         const chunk = data.toString();
         stderr += chunk;
-        this.trace?.onPeerStderr(round, chunk);
+        this.trace?.onPeerStderr(round, chunk, attempt);
       });
 
       child.on('error', (err) => {
@@ -201,6 +204,7 @@ export class CodexCliAdapter implements Adapter {
         }
         void this.trace?.onRoundFinish({
           round,
+          attempt,
           command: [this.codexBin, ...args],
           model: this.model,
           modelSource: this.modelSource,
@@ -227,6 +231,7 @@ export class CodexCliAdapter implements Adapter {
         }
         void this.trace?.onRoundFinish({
           round,
+          attempt,
           command: [this.codexBin, ...args],
           model: this.model,
           modelSource: this.modelSource,

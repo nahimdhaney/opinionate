@@ -35,6 +35,43 @@ describe('createExecutionTrace', () => {
     expect(artifact).toContain('"durationMs": 1200');
   });
 
+  it('writes retry attempts as separate artifacts within the same logical round', async () => {
+    const traceDir = mkdtempSync(join(tmpdir(), 'opinionate-trace-attempt-'));
+    tempDirs.push(traceDir);
+
+    const trace = createExecutionTrace({ traceDir, verbose: false });
+
+    await trace.recordRoundResult({
+      round: 1,
+      attempt: 1,
+      command: ['codex', 'exec', 'hello'],
+      stdout: '',
+      stderr: 'first attempt',
+      exitCode: null,
+      signal: 'SIGINT',
+      durationMs: 1000,
+      modelSource: 'codex-default',
+    });
+
+    await trace.recordRoundResult({
+      round: 1,
+      attempt: 2,
+      command: ['codex', 'exec', 'hello'],
+      stdout: 'peer output',
+      stderr: 'second attempt',
+      exitCode: 0,
+      signal: null,
+      durationMs: 1200,
+      modelSource: 'codex-default',
+    });
+
+    const firstAttempt = readFileSync(join(traceDir, 'round-1-attempt-1.json'), 'utf8');
+    const secondAttempt = readFileSync(join(traceDir, 'round-1-attempt-2.json'), 'utf8');
+
+    expect(firstAttempt).toContain('"attempt": 1');
+    expect(secondAttempt).toContain('"attempt": 2');
+  });
+
   it('prints command metadata in verbose mode', () => {
     const messages: string[] = [];
     const trace = createExecutionTrace({

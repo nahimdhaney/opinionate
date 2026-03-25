@@ -352,8 +352,17 @@ describe('Deliberation', () => {
 
     expect(result.agreed).toBe(true);
     expect(calls).toHaveLength(2);
+    expect(calls[0]!.options).toEqual({
+      timeoutMs: 1000,
+      logicalRound: 1,
+      attempt: 1,
+    });
     expect(calls[1]!.context.fileStrategy).toBe('reference');
-    expect(calls[1]!.options?.timeoutMs).toBe(1500);
+    expect(calls[1]!.options).toEqual({
+      timeoutMs: 1500,
+      logicalRound: 1,
+      attempt: 2,
+    });
   });
 
   it('uses partial timeout output when the adapter returns a partial AdapterResponse', async () => {

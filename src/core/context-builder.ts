@@ -1,4 +1,4 @@
-import { relative } from 'node:path';
+import { isAbsolute, relative } from 'node:path';
 import type {
   DeliberationContext,
   DeliberationMessage,
@@ -61,9 +61,14 @@ export class ContextBuilder {
 
   filterFiles(files: FileContext[]): FileContext[] {
     return files.filter((f) => {
-      const rel = relative(this.cwd, f.path) || f.path;
+      const rel = this.normalizeProjectRelativePath(f.path);
       return !this.ignoreMatcher.isIgnored(rel);
     });
+  }
+
+  private normalizeProjectRelativePath(filePath: string): string {
+    const projectRelative = isAbsolute(filePath) ? relative(this.cwd, filePath) : filePath;
+    return projectRelative.replace(/\\/g, '/').replace(/^\.\//, '');
   }
 
   private buildStaticContext(context: DeliberationContext, budget: number): string | null {

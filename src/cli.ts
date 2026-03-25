@@ -333,8 +333,10 @@ function buildSessionFileDeltas(
   const previousByPath = new Map(session.files.map((file) => [file.path, file]));
   const deltas: FileDelta[] = [];
   let totalBytes = 0;
+  const currentPaths = new Set<string>();
 
   for (const file of files) {
+    currentPaths.add(file.path);
     const previous = previousByPath.get(file.path);
     if (!previous?.snapshotFile) {
       deltas.push({
@@ -380,6 +382,45 @@ function buildSessionFileDeltas(
     }
 
     deltas.push(delta);
+    totalBytes += estimatedSize;
+  }
+
+  for (const previous of session.files) {
+    if (currentPaths.has(previous.path)) {
+      continue;
+    }
+
+    let previousContent = '';
+    try {
+      if (previous.snapshotFile) {
+        previousContent = readSnapshotText(cwd, session.id, previous.snapshotFile);
+      }
+    } catch {
+      previousContent = '';
+    }
+
+    const changedLineCount = previousContent
+      ? previousContent.split(/\r?\n/).length
+      : 0;
+    const summary = 'file removed from session; prior content should not be assumed current';
+    const estimatedSize = Buffer.byteLength(summary, 'utf8');
+
+    if (totalBytes + estimatedSize > 24 * 1024) {
+      deltas.push({
+        path: previous.path,
+        status: 'removed',
+        summary: 'file removed from session (summary truncated to stay within budget)',
+        changedLineCount,
+      });
+      continue;
+    }
+
+    deltas.push({
+      path: previous.path,
+      status: 'removed',
+      summary,
+      changedLineCount,
+    });
     totalBytes += estimatedSize;
   }
 

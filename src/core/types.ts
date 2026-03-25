@@ -77,6 +77,8 @@ export interface DeliberationSessionMemory {
 
 export interface AdapterCallOptions {
   timeoutMs?: number;
+  logicalRound?: number;
+  attempt?: number;
 }
 
 export interface Adapter {
